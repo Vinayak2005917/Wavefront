@@ -1,0 +1,39 @@
+# Rust / Cargo build output
+/target/
+
+# Tauri generated build output and local CLI state
+/src-tauri/target/
+/src-tauri/gen/schemas/
+
+# Packaged application binaries and installers
+/dist/*.exe
+/dist/*.msi
+/dist/*.msix
+/dist/*.appx
+/dist/*.zip
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs, temporary files, and crash dumps
+*.log
+*.tmp
+*.temp
+*.dmp
+
+# Windows and editor/IDE files
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Wavefront</title>
+    <link rel="stylesheet" href="./dashboard.css" />
+  </head>
+  <body>
+    <main class="dashboard">
+      <section class="model-section" aria-labelledby="model-title">
+        <div class="section-heading">
+          <div>
+            <h1 id="model-title">Phonon-2</h1>
+          </div>
+          <span id="model-badge" class="badge">CHECKING</span>
+        </div>
+        <p id="model-detail" class="model-detail">Checking the local model</p>
+        <div class="progress-track" role="progressbar" aria-label="Model download progress" aria-valuemin="0" aria-valuemax="100">
+          <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        <div class="progress-labels"><span id="progress-label">Preparing model</span><span id="progress-percent">—</span></div>
+        <div id="model-actions" class="model-actions" hidden>
+          <p id="model-prompt">Phonon-2 is not installed. Download it now?</p>
+          <div class="model-action-buttons"><button id="download-model" type="button">Download model</button><button id="skip-download" class="secondary-button" type="button">Not now</button></div>
+          <p id="model-error" class="model-error" role="alert"></p>
+        </div>
+      </section>
+
+      <section class="settings-section" aria-labelledby="settings-title">
+        <h2 id="settings-title">Settings</h2>
+        <div class="settings-grid">
+          <div class="setting">
+            <label for="model-directory">Model folder</label>
+            <div class="setting-row"><input id="model-directory" type="text" spellcheck="false" aria-label="Model folder" /><button id="save-model-directory" type="button">Save</button></div>
+            <small class="setting-note">The Phonon-2 model archive is stored in this folder.</small>
+            <p id="model-directory-status" class="setting-status" role="status"></p>
+          </div>
+          <div class="setting">
+            <label for="hotkey-shortcut">Dictation shortcut</label>
+            <div class="setting-row"><input id="hotkey-shortcut" type="text" spellcheck="false" aria-label="Dictation shortcut" placeholder="Ctrl + Q" /><button id="save-hotkey" type="button">Save</button></div>
+            <small class="setting-note">Use a modifier (Win, Ctrl, Alt, or Shift) plus one key, for example Ctrl + Shift + D.</small>
+            <p id="hotkey-status" class="setting-status" role="status"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="timeline-section" aria-label="Session history">
+        <section class="test-section" aria-labelledby="test-title">
+          <div class="test-heading">
+            <div><p class="eyebrow">TRANSCRIPTION CHECK</p><h2 id="test-title">Read-aloud test</h2></div>
+            <button id="start-test" type="button">Start test</button>
+          </div>
+          <p class="test-instructions">Read this sentence aloud, then select Stop test. Wavefront will save each recognition update and the final transcript for comparison.</p>
+          <blockquote id="test-preset">Pack a small flashlight, a folded map, and a thermos of cinnamon tea before leaving the station; the trail curves past three quiet ponds, climbs a rocky ridge, and ends at a wooden lookout where the whole valley glows beneath the late-afternoon sun.</blockquote>
+          <p id="test-status" class="test-status" role="status">Ready when you are.</p>
+          <div id="test-result" class="test-result" hidden></div>
+        </section>
+        <div class="timeline-heading">
+          <div><p class="eyebrow">SESSION HISTORY</p></div>
+          <span id="transcript-count" class="count">0</span>
+        </div>
+        <div id="timeline" class="timeline" aria-live="polite">
+          <div id="empty-state" class="empty-state"><span class="empty-mark">—</span><p>Your session history will appear here</p><span id="shortcut-hint">Start dictating with Ctrl + Q</span></div>
+        </div>
+      </section>
+    </main>
+    <script src="./dashboard.js"></script>
+  </body>
+</html>

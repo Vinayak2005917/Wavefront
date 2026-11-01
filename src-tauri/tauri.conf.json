@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wavefront",
+  "version": "0.1.0",
+  "identifier": "com.wavefront.dictation",
+  "build": {
+    "frontendDist": "../frontend"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "pill",
+        "title": "Wavefront",
+        "width": 180,
+        "height": 38,
+        "minWidth": 180,
+        "maxWidth": 180,
+        "minHeight": 38,
+        "maxHeight": 38,
+        "center": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "shadow": false
+      },
+      {
+        "label": "dashboard",
+        "title": "Wavefront",
+        "url": "dashboard.html",
+        "width": 560,
+        "height": 680,
+        "minWidth": 420,
+        "minHeight": 480,
+        "center": true,
+        "visible": false,
+        "decorations": true,
+        "resizable": true,
+        "backgroundColor": "#282828"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["../assets/logo.ico"],
+    "resources": ["resources/THIRD_PARTY_NOTICES.txt"],
+    "category": "Utility",
+    "shortDescription": "Offline voice typing for Windows",
+    "longDescription": "Offline voice typing for Windows powered by the local Phonon-2 speech model.",
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "../assets/logo.ico",
+        "uninstallerIcon": "../assets/logo.ico"
+      }
+    }
+  }
+}
+

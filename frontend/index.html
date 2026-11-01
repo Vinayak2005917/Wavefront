@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Wavefront</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main id="pill" class="pill is-entering state-ready" aria-label="Dictation controls">
+      <button id="toggle-dictation" type="button" aria-label="Start dictation" title="Start dictation" disabled>
+        <span class="play-icon" aria-hidden="true">▶</span>
+      </button>
+      <canvas id="waveform" aria-hidden="true"></canvas>
+      <span class="listen-indicator" aria-label="Microphone inactive" title="Microphone inactive"></span>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
