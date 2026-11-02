@@ -34,8 +34,9 @@ fn delete_transcript(timestamp: u64, text: String, app: tauri::AppHandle) -> Res
 }
 
 #[tauri::command]
-fn dashboard_model_directory(app: tauri::AppHandle) -> Result<String, String> {
-    recognizer::Recognizer::model_directory(&app).map(|path| path.to_string_lossy().into_owned())
+fn dashboard_recognizer_settings(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let settings = recognizer::RecognizerSettings::load(&app)?;
+    Ok(serde_json::json!({"model_directory": settings.model_directory.to_string_lossy()}))
 }
 
 #[tauri::command]
@@ -44,17 +45,17 @@ fn dashboard_hotkey(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command]
-fn save_dashboard_model_directory(
+fn save_recognizer_settings(
     app: tauri::AppHandle,
-    directory: String,
-) -> Result<String, String> {
-    let value = directory.trim();
-    if value.is_empty() {
-        return Err("Choose a folder for the model first.".into());
-    }
-    let path = std::path::PathBuf::from(value);
-    recognizer::Recognizer::save_model_directory(&app, &path)?;
-    Ok(path.to_string_lossy().into_owned())
+    state: tauri::State<'_, AppState>,
+    model_directory: String,
+) -> Result<(), String> {
+    let directory = recognizer::normalize_model_directory(&model_directory)?;
+    recognizer::RecognizerSettings::save(&app, &directory)?;
+    state
+        .commands
+        .send(dictation::Command::ReloadModel)
+        .map_err(|e| format!("Could not reload the Zipformer model: {e}"))
 }
 
 #[tauri::command]
@@ -77,32 +78,20 @@ fn toggle_dictation(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let target = unsafe { win::GetForegroundWindow() as isize };
     state
         .commands
-        .send(dictation::Command::Toggle { target, test: false })
+        .send(dictation::Command::Toggle {
+            target,
+            test: false,
+        })
         .map_err(|error| format!("Could not toggle dictation: {error}"))
 }
 
 #[tauri::command]
 fn start_transcription_test(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let target = unsafe { win::GetForegroundWindow() as isize };
-    state.commands.send(dictation::Command::StartTest { target })
-        .map_err(|error| format!("Could not start transcription test: {error}"))
-}
-
-#[tauri::command]
-fn install_model(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    directory: String,
-) -> Result<(), String> {
-    let path = std::path::PathBuf::from(directory.trim());
-    if path.as_os_str().is_empty() {
-        return Err("Choose a folder for the model first.".into());
-    }
-    recognizer::Recognizer::save_model_directory(&app, &path)?;
     state
         .commands
-        .send(dictation::Command::InstallModel { path })
-        .map_err(|error| format!("Could not start model setup: {error}"))
+        .send(dictation::Command::StartTest { target })
+        .map_err(|error| format!("Could not start transcription test: {error}"))
 }
 
 fn main() {
@@ -114,9 +103,9 @@ fn main() {
             // update cannot be overwritten by a late startup "checking" state.
             overlay::publish(
                 &handle,
-                "checking",
-                "Preparing Phonon-2",
-                "Checking the local model",
+                "asr_checking",
+                "Preparing English Zipformer",
+                "Checking the local model files",
             );
             let commands = dictation::start(handle.clone());
             let hotkey_controller = hotkey::start(
@@ -148,11 +137,10 @@ fn main() {
             dashboard_state,
             dashboard_history,
             delete_transcript,
-            dashboard_model_directory,
+            dashboard_recognizer_settings,
             dashboard_hotkey,
-            save_dashboard_model_directory,
+            save_recognizer_settings,
             save_dashboard_hotkey,
-            install_model,
             toggle_dictation,
             start_transcription_test
         ])

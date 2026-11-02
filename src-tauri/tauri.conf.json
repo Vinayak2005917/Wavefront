@@ -54,7 +54,7 @@
     "resources": ["resources/THIRD_PARTY_NOTICES.txt"],
     "category": "Utility",
     "shortDescription": "Offline voice typing for Windows",
-    "longDescription": "Offline voice typing for Windows powered by the local Phonon-2 speech model.",
+    "longDescription": "Offline voice typing for Windows powered by the local English Zipformer speech model.",
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": {

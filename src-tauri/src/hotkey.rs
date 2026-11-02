@@ -49,7 +49,10 @@ pub fn saved_shortcut(app: &AppHandle) -> String {
     };
 
     // Replace defaults from earlier builds while preserving shortcuts the user chose.
-    if matches!(parsed.display.as_str(), "Win + Shift + D" | "Ctrl + Shift + D") {
+    if matches!(
+        parsed.display.as_str(),
+        "Win + Shift + D" | "Ctrl + Shift + D"
+    ) {
         let _ = fs::write(path, DEFAULT_SHORTCUT);
         DEFAULT_SHORTCUT.to_owned()
     } else {

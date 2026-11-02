@@ -183,7 +183,11 @@ fn pick_device(name: Option<&str>) -> Result<cpal::Device> {
 }
 
 /// Mono f32 samples at the device rate, appended by the capture callback, and how many have arrived in total.
-type Shared = Arc<(Mutex<Vec<f32>>, std::sync::atomic::AtomicUsize)>;
+type Shared = Arc<(
+    Mutex<Vec<f32>>,
+    std::sync::atomic::AtomicUsize,
+    std::sync::atomic::AtomicUsize,
+)>;
 
 fn build_stream<T>(
     device: &cpal::Device,
@@ -223,6 +227,8 @@ where
             if b.len() > max_samples {
                 let excess = b.len() - max_samples;
                 b.drain(..excess);
+                // Keep overruns observable to streaming clients instead of silently losing audio.
+                buf.2.fetch_add(excess, Ordering::Relaxed);
             }
             if frames > 0 {
                 level.store(
@@ -322,6 +328,11 @@ impl Capture {
         std::mem::take(&mut *self.buf.0.lock().unwrap())
     }
 
+    /// Number of oldest mono samples dropped to preserve the bounded capture buffer since last read.
+    pub fn take_overruns(&self) -> usize {
+        self.buf.2.swap(0, Ordering::Relaxed)
+    }
+
     /// Shared RMS meter updated directly by the audio callback, so UI meters keep moving during recognition.
     pub fn level_handle(&self) -> Arc<AtomicU32> {
         self.level.clone()
@@ -330,13 +341,20 @@ impl Capture {
     /// Stop capturing and return what is left in the buffer. Waits (up to a second) until the audio up to now
     /// plus `tail` has actually arrived, so the last word isn't cut off.
     pub fn finish(self, tail: Duration) -> Vec<f32> {
+        self.finish_with_overruns(tail).0
+    }
+
+    /// Stop capture and also return the number of discarded samples observed before shutdown.
+    pub fn finish_with_overruns(self, tail: Duration) -> (Vec<f32>, usize) {
         let want = ((self.started.elapsed() + tail).as_secs_f64() * self.rate as f64) as usize;
         let deadline = Instant::now() + tail + Duration::from_secs(1);
         while self.buf.1.load(Ordering::Relaxed) < want && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
         drop(self.stream);
-        std::mem::take(&mut *self.buf.0.lock().unwrap())
+        let samples = std::mem::take(&mut *self.buf.0.lock().unwrap());
+        let overruns = self.buf.2.swap(0, Ordering::Relaxed);
+        (samples, overruns)
     }
 }
 

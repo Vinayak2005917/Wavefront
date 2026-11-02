@@ -23,7 +23,7 @@ fn state_store() -> &'static Mutex<serde_json::Value> {
     LAST_STATE.get_or_init(|| {
         Mutex::new(serde_json::json!({
             "state": "checking",
-            "message": "Preparing Phonon-2",
+            "message": "Preparing English Zipformer",
             "detail": "Checking the local model"
         }))
     })
@@ -147,13 +147,21 @@ pub fn publish_transcript(app: &AppHandle, text: &str) {
     }
 }
 
-pub fn publish_test_update(app: &AppHandle, session_id: u64, revision: u64, window_start: f32, window_end: f32, words: &[crate::transcript::WordHypothesis]) {
-    let _ = app.emit("transcription-test-update", serde_json::json!({
-        "sessionId": session_id, "revision": revision, "windowStart": window_start,
-        "windowEnd": window_end, "words": words.iter().map(|w| &w.text).collect::<Vec<_>>(),
-        "text": words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "),
-        "words": words.iter().map(|w| serde_json::json!({"text": w.text, "start": w.start, "end": w.end})).collect::<Vec<_>>(),
-    }));
+pub fn publish_test_update(
+    app: &AppHandle,
+    session_id: u64,
+    revision: u64,
+    window_start: f32,
+    window_end: f32,
+    text: &str,
+) {
+    let _ = app.emit(
+        "transcription-test-update",
+        serde_json::json!({
+            "sessionId": session_id, "revision": revision, "windowStart": window_start,
+        "windowEnd": window_end, "text": text,
+        }),
+    );
 }
 
 pub fn publish_test_complete(app: &AppHandle, session_id: u64, started_ms: u64, text: &str) {

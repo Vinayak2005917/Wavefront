@@ -1,19 +1,16 @@
 THIRD-PARTY NOTICES
 
-Phonon-2 model weights
-The Phonon-2 model is not bundled with this installer. On first launch, Wavefront downloads the official model archive from Fermion Research and stores it in the current user's application data directory. The model weights are licensed under Creative Commons Attribution 4.0 International (CC BY 4.0).
+sherpa-onnx
+The application uses the sherpa-onnx Rust API and native inference library, licensed under Apache-2.0.
+Source: https://github.com/k2-fsa/sherpa-onnx
+License: https://www.apache.org/licenses/LICENSE-2.0
 
-Model: Phonon-2
-Publisher: Fermion Research
-Model page: https://www.fermionresearch.com/models/phonon-2/
-Weights: https://huggingface.co/FermionResearch/Phonon-2
-License: https://creativecommons.org/licenses/by/4.0/
-Upstream model attribution: NVIDIA Parakeet TDT 0.6B v3, as identified by Fermion Research.
-
-phonon-rs
-This application uses phonon-rs 0.1.3, an Apache-2.0-licensed Rust implementation of Phonon-2.
-Source: https://github.com/apiplant/phonon-rs
+English streaming Zipformer model
+The application downloads the English streaming Zipformer model on first launch. The model repository declares Apache-2.0 licensing.
+Model: sherpa-onnx-streaming-zipformer-en-2023-06-26
+Publisher: sherpa-onnx / csukuangfj
+Model page: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26
+Download: https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models
 License: https://www.apache.org/licenses/LICENSE-2.0
 
 Other Rust dependencies retain the licenses stated by their respective authors and package metadata. This notice does not replace those licenses.
-

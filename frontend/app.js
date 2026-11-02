@@ -7,12 +7,16 @@ const listen = window.__TAURI__?.event?.listen;
 
 const states = {
   checking: "loading",
-  downloading: "loading",
-  loading: "loading",
+  asr_checking: "loading",
+  asr_starting: "loading",
+  asr_downloading: "loading",
+  asr_loading: "loading",
   ready: "ready",
   stopped: "ready",
   listening: "listening",
   processing: "processing",
+  finalizing: "processing",
+  asr_error: "error",
   model_error: "error",
   error: "error",
   hotkey_error: "error",
@@ -33,7 +37,7 @@ function showState(data = {}) {
   playIcon.textContent = listening ? "" : "▶";
   toggleButton.setAttribute("aria-label", listening ? "Stop dictation" : "Start dictation");
   toggleButton.title = listening ? "Stop dictation" : "Start dictation";
-  toggleButton.disabled = !["ready", "listening", "processing", "stopped"].includes(data.state);
+  toggleButton.disabled = !["ready", "listening", "processing", "finalizing", "stopped"].includes(data.state);
   const indicator = document.querySelector(".listen-indicator");
   indicator.setAttribute("aria-label", listening ? "Microphone is listening" : "Microphone inactive");
   indicator.title = listening ? "Microphone is listening" : "Microphone inactive";

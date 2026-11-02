@@ -12,18 +12,18 @@
       <section class="model-section" aria-labelledby="model-title">
         <div class="section-heading">
           <div>
-            <h1 id="model-title">Phonon-2</h1>
+            <h1 id="model-title">Local speech runtime</h1>
           </div>
           <span id="model-badge" class="badge">CHECKING</span>
         </div>
-        <p id="model-detail" class="model-detail">Checking the local model</p>
+        <p id="model-detail" class="model-detail">Checking the English streaming model</p>
         <div class="progress-track" role="progressbar" aria-label="Model download progress" aria-valuemin="0" aria-valuemax="100">
           <div id="progress-fill" class="progress-fill"></div>
         </div>
         <div class="progress-labels"><span id="progress-label">Preparing model</span><span id="progress-percent">—</span></div>
-        <div id="model-actions" class="model-actions" hidden>
-          <p id="model-prompt">Phonon-2 is not installed. Download it now?</p>
-          <div class="model-action-buttons"><button id="download-model" type="button">Download model</button><button id="skip-download" class="secondary-button" type="button">Not now</button></div>
+          <div id="model-actions" class="model-actions" hidden>
+          <p id="model-prompt">The local recognizer needs attention.</p>
+          <div class="model-action-buttons"><button id="download-model" type="button">Reload model</button></div>
           <p id="model-error" class="model-error" role="alert"></p>
         </div>
       </section>
@@ -32,10 +32,9 @@
         <h2 id="settings-title">Settings</h2>
         <div class="settings-grid">
           <div class="setting">
-            <label for="model-directory">Model folder</label>
-            <div class="setting-row"><input id="model-directory" type="text" spellcheck="false" aria-label="Model folder" /><button id="save-model-directory" type="button">Save</button></div>
-            <small class="setting-note">The Phonon-2 model archive is stored in this folder.</small>
-            <p id="model-directory-status" class="setting-status" role="status"></p>
+            <label for="model-directory">Zipformer model folder</label>
+            <div class="setting-row"><input id="model-directory" type="text" spellcheck="false" aria-label="Zipformer model folder" /></div>
+            <small class="setting-note">Wavefront downloads the English streaming model here on first launch. Existing Fermion cache files are left untouched.</small>
           </div>
           <div class="setting">
             <label for="hotkey-shortcut">Dictation shortcut</label>
@@ -44,6 +43,8 @@
             <p id="hotkey-status" class="setting-status" role="status"></p>
           </div>
         </div>
+        <div class="setting-row" style="margin-top:14px"><button id="save-model-settings" type="button">Save model folder and reload</button></div>
+        <p id="model-settings-status" class="setting-status" role="status"></p>
       </section>
 
       <section class="timeline-section" aria-label="Session history">

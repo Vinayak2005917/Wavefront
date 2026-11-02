@@ -15,9 +15,8 @@ const modelPrompt = document.querySelector("#model-prompt");
 const modelDirectory = document.querySelector("#model-directory");
 const downloadButton = document.querySelector("#download-model");
 const modelError = document.querySelector("#model-error");
-const skipDownloadButton = document.querySelector("#skip-download");
-const saveModelDirectoryButton = document.querySelector("#save-model-directory");
-const modelDirectoryStatus = document.querySelector("#model-directory-status");
+const saveModelSettingsButton = document.querySelector("#save-model-settings");
+const modelSettingsStatus = document.querySelector("#model-settings-status");
 const hotkeyShortcut = document.querySelector("#hotkey-shortcut");
 const saveHotkeyButton = document.querySelector("#save-hotkey");
 const hotkeyStatus = document.querySelector("#hotkey-status");
@@ -29,27 +28,25 @@ const testResult = document.querySelector("#test-result");
 let activeTest = null;
 
 function showState(data = {}) {
-  const state = data.state || "checking";
+  const state = data.state || "asr_checking";
   dashboard.dataset.modelState = state;
   const percentMatch = `${data.message || ""} ${data.detail || ""}`.match(/(\d+)%/);
   const percent = percentMatch ? Number(percentMatch[1]) : state === "ready" ? 100 : 0;
-  badge.textContent = ({ checking: "CHECKING", downloading: "DOWNLOADING", loading: "LOADING", ready: "READY", stopped: "READY", model_error: "ERROR", error: "ERROR", listening: "LISTENING", processing: "PROCESSING" })[state] || state.toUpperCase();
+  badge.textContent = ({ asr_checking: "CHECKING", asr_starting: "STARTING", asr_downloading: "DOWNLOADING", asr_loading: "LOADING", ready: "READY", stopped: "READY", asr_error: "ERROR", error: "ERROR", listening: "LISTENING", finalizing: "FINALIZING", focus_changed: "PAUSED" })[state] || state.toUpperCase();
   badge.classList.toggle("is-ready", state === "ready" || state === "stopped");
-  const needsSetup = state === "model_missing" || state === "model_error" || state === "error";
+  const needsSetup = state === "asr_error" || state === "error";
   modelActions.hidden = !needsSetup;
-  modelPrompt.textContent = state === "model_missing"
-    ? "Phonon-2 isn't on this device yet. Download the 164 MB model now?"
-    : data.detail || data.message || "Model setup needs attention. You can try again.";
-  modelError.textContent = state === "model_missing" ? "" : data.detail || "";
-  downloadButton.textContent = state === "model_missing" ? "Download model" : "Try again";
+  modelPrompt.textContent = data.message || "The local recognizer needs attention.";
+  modelError.textContent = data.detail || "";
+  downloadButton.textContent = "Reload model";
   downloadButton.disabled = false;
-  detail.textContent = state === "ready" || state === "stopped"
-    ? "Model ready on this device"
-    : data.detail || data.message || "Preparing local speech model";
-  progressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  detail.textContent = data.detail || data.message || "Preparing the local speech model";
+  const indeterminate = state === "asr_downloading" && !percentMatch;
+  progressFill.classList.toggle("is-indeterminate", indeterminate);
+  progressFill.style.width = `${indeterminate ? 34 : Math.max(0, Math.min(100, percent))}%`;
   progressPercent.textContent = percentMatch || percent === 100 ? `${percent}%` : "—";
-  progressLabel.textContent = state === "ready" || state === "stopped" ? "Model ready on this device" : state === "downloading" ? "Downloading model" : state === "loading" ? "Loading model" : state === "model_error" || state === "error" ? "Model setup needs attention" : "Preparing model";
-  if (state === "downloading" || state === "loading") modelActions.hidden = true;
+  progressLabel.textContent = ({ asr_checking: "Checking model files", asr_starting: "Starting recognizer", asr_downloading: "Downloading English Zipformer", asr_loading: "Loading English Zipformer", listening: "Streaming speech", finalizing: "Finalizing transcript", asr_error: "Recognizer needs attention" })[state] || "Preparing local speech model";
+  if (["asr_checking", "asr_starting", "asr_downloading", "asr_loading", "listening", "finalizing"].includes(state)) modelActions.hidden = true;
   progressBar.setAttribute("aria-valuenow", String(percent));
 }
 
@@ -145,7 +142,7 @@ async function initializeDashboard() {
     badge.textContent = "APP ERROR";
     detail.textContent = `Could not read app status: ${error}`;
   });
-  invoke("dashboard_model_directory").then((directory) => { modelDirectory.value = directory; }).catch(() => {});
+  invoke("dashboard_recognizer_settings").then((settings) => { modelDirectory.value = settings.model_directory; }).catch(() => {});
   invoke("dashboard_hotkey").then((shortcut) => {
     hotkeyShortcut.value = shortcut;
     shortcutHint.textContent = `Start dictating with ${shortcut}`;
@@ -160,7 +157,7 @@ initializeDashboard();
 if (listen) {
   listen("dictation-state", ({ payload }) => {
     if (!activeTest?.recording) return;
-    if (["error", "model_error", "focus_changed"].includes(payload?.state)) {
+    if (["error", "asr_error", "focus_changed"].includes(payload?.state)) {
       activeTest.recording = false;
       startTestButton.disabled = false;
       startTestButton.textContent = "Start test";
@@ -172,7 +169,7 @@ if (listen) {
     if (activeTest.sessionId === null) activeTest.sessionId = payload.sessionId;
     if (payload.sessionId !== activeTest.sessionId) return;
     activeTest.updates.push(payload);
-    testStatus.textContent = `Captured update ${payload.revision} (${payload.windowStart.toFixed(1)}–${payload.windowEnd.toFixed(1)} s); ${activeTest.updates.length} update${activeTest.updates.length === 1 ? "" : "s"} recorded.`;
+    testStatus.textContent = `Captured stream update ${payload.revision} at ${payload.windowEnd.toFixed(1)} s; ${activeTest.updates.length} update${activeTest.updates.length === 1 ? "" : "s"} recorded.`;
   });
   listen("transcription-test-complete", ({ payload }) => {
     if (!activeTest) return;
@@ -204,7 +201,7 @@ function renderTestResult() {
   const list = document.createElement("ol");
   activeTest.updates.forEach((update) => {
     const row = document.createElement("li");
-    row.textContent = `#${update.revision} · ${update.windowStart.toFixed(1)}–${update.windowEnd.toFixed(1)} s: ${update.text || "(empty)"}`;
+    row.textContent = `#${update.revision} · ${update.windowEnd.toFixed(1)} s: ${update.text || "(empty)"}`;
     list.append(row);
   });
   const actions = document.createElement("div");
@@ -246,13 +243,12 @@ startTestButton.addEventListener("click", async () => {
     startTestButton.disabled = false;
   }
 });
-
 downloadButton.addEventListener("click", async () => {
   if (!invoke) return;
   downloadButton.disabled = true;
-  modelError.textContent = "Starting model download…";
+  modelError.textContent = "Loading the local Zipformer model…";
   try {
-    await invoke("install_model", { directory: modelDirectory.value });
+    await invoke("save_recognizer_settings", { modelDirectory: modelDirectory.value });
     modelActions.hidden = true;
   } catch (error) {
     modelError.textContent = String(error);
@@ -260,18 +256,17 @@ downloadButton.addEventListener("click", async () => {
   }
 });
 
-saveModelDirectoryButton.addEventListener("click", async () => {
+saveModelSettingsButton.addEventListener("click", async () => {
   if (!invoke) return;
-  saveModelDirectoryButton.disabled = true;
-  modelDirectoryStatus.textContent = "Saving model folder…";
+  saveModelSettingsButton.disabled = true;
+  modelSettingsStatus.textContent = "Saving model folder and reloading…";
   try {
-    const directory = await invoke("save_dashboard_model_directory", { directory: modelDirectory.value });
-    modelDirectory.value = directory;
-    modelDirectoryStatus.textContent = "Model folder saved.";
+    await invoke("save_recognizer_settings", { modelDirectory: modelDirectory.value });
+    modelSettingsStatus.textContent = "Model folder saved. The recognizer is loading.";
   } catch (error) {
-    modelDirectoryStatus.textContent = String(error);
+    modelSettingsStatus.textContent = String(error);
   } finally {
-    saveModelDirectoryButton.disabled = false;
+    saveModelSettingsButton.disabled = false;
   }
 });
 
@@ -289,10 +284,4 @@ saveHotkeyButton.addEventListener("click", async () => {
   } finally {
     saveHotkeyButton.disabled = false;
   }
-});
-
-skipDownloadButton.addEventListener("click", () => {
-  modelActions.hidden = true;
-  badge.textContent = "NOT INSTALLED";
-  detail.textContent = "Model download skipped. You can install it later from this window.";
 });

@@ -1,4 +1,6 @@
-# Wavefront Near-Real-Time Transcription Decisions
+# Wavefront Near-Real-Time Transcription Decisions (superseded)
+
+This document records the original batch-transcription design and is kept as project history. Wavefront now uses an in-process sherpa-onnx English streaming Zipformer recognizer. See [Zipformer setup](ZIPFORMER_STREAMING.md) for the current architecture.
 
 This document records the initial implementation decisions for exploring near-real-time transcription. Values are starting targets for trial and error, not guarantees.
 

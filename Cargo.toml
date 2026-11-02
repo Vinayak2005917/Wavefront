@@ -2,9 +2,6 @@
 members = ["src-tauri"]
 resolver = "2"
 
-[patch.crates-io]
-phonon-rs = { path = "vendor/phonon-rs" }
-
 [profile.dev.package."*"]
 opt-level = 3
 
