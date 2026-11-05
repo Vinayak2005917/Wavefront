@@ -9,6 +9,11 @@
 # Packaged application binaries and installers (publish releases via GitHub Releases)
 /dist/
 
+# Generated MSIX packages and staging tree
+*.msix
+/msix-staging/
+/Package.appxmanifest
+
 # Local environment and credentials
 .env
 .env.*
@@ -34,3 +39,6 @@ Desktop.ini
 *.swp
 *.swo
 *~
+
+# Development certificate
+devcert.pfx
