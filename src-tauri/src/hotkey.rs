@@ -23,6 +23,12 @@ enum UpdateRequest {
         shortcut: Shortcut,
         reply: SyncSender<Result<(), String>>,
     },
+    Suspend {
+        reply: SyncSender<Result<(), String>>,
+    },
+    Resume {
+        reply: SyncSender<Result<(), String>>,
+    },
 }
 
 pub struct Controller {
@@ -182,29 +188,73 @@ pub fn start(app: AppHandle, commands: Sender<Command>, initial: &str) -> Contro
             }
 
             let _ = app.emit("hotkey-ready", ());
+            let mut suspended = false;
             while win::GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
-                if msg.message == win::WM_HOTKEY && msg.w_param == HOTKEY_ID as usize {
-                    let foreground = win::GetForegroundWindow() as isize;
-                    let _ = commands.send(Command::Toggle { target: foreground, test: false });
-                } else if msg.message == win::WM_APP_HOTKEY_UPDATE {
-                    while let Ok(UpdateRequest::Set { shortcut, reply }) = update_rx.try_recv() {
-                        let previous = active.clone();
-                        win::UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID);
-                        match register(&shortcut) {
-                            Ok(()) => {
-                                active = shortcut;
-                                let _ = reply.send(Ok(()));
-                                let _ = app.emit("hotkey-changed", active.display.clone());
+                if msg.message == win::WM_APP_HOTKEY_UPDATE || msg.message == win::WM_HOTKEY {
+                    let mut processed_update = false;
+                    while let Ok(request) = update_rx.try_recv() {
+                        processed_update = true;
+                        match request {
+                            UpdateRequest::Set { shortcut, reply } => {
+                                if suspended {
+                                    active = shortcut;
+                                    let _ = reply.send(Ok(()));
+                                } else {
+                                    let previous = active.clone();
+                                    win::UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID);
+                                    match register(&shortcut) {
+                                        Ok(()) => {
+                                            active = shortcut;
+                                            let _ = reply.send(Ok(()));
+                                            let _ = app.emit("hotkey-changed", active.display.clone());
+                                        }
+                                        Err(()) => {
+                                            let error = win::GetLastError();
+                                            let _ = register(&previous);
+                                            active = previous;
+                                            let _ = reply.send(Err(format!(
+                                                "That shortcut is already in use or Windows rejected it (error {error})."
+                                            )));
+                                        }
+                                    }
+                                }
                             }
-                            Err(()) => {
-                                let error = win::GetLastError();
-                                let _ = register(&previous);
-                                active = previous;
-                                let _ = reply.send(Err(format!(
-                                    "That shortcut is already in use or Windows rejected it (error {error})."
-                                )));
+                            UpdateRequest::Suspend { reply } => {
+                                if !suspended {
+                                    win::UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID);
+                                    suspended = true;
+                                }
+                                let _ = reply.send(Ok(()));
+                            }
+                            UpdateRequest::Resume { reply } => {
+                                if suspended {
+                                    match register(&active) {
+                                        Ok(()) => {
+                                            suspended = false;
+                                            let _ = reply.send(Ok(()));
+                                            let _ = app.emit("hotkey-changed", active.display.clone());
+                                        }
+                                        Err(()) => {
+                                            let error = win::GetLastError();
+                                            let _ = reply.send(Err(format!(
+                                                "Could not restore {} (Windows error {error}).",
+                                                active.display
+                                            )));
+                                        }
+                                    }
+                                } else {
+                                    let _ = reply.send(Ok(()));
+                                }
                             }
                         }
+                    }
+                    if !processed_update
+                        && !suspended
+                        && msg.message == win::WM_HOTKEY
+                        && msg.w_param == HOTKEY_ID as usize
+                    {
+                        let foreground = win::GetForegroundWindow() as isize;
+                        let _ = commands.send(Command::Toggle { target: foreground });
                     }
                 } else {
                     win::TranslateMessage(&msg);
@@ -232,6 +282,22 @@ fn register(shortcut: &Shortcut) -> Result<(), ()> {
 pub fn set(controller: &Controller, value: &str) -> Result<String, String> {
     let shortcut = Shortcut::parse(value)?;
     let display = shortcut.display.clone();
+    request_update(controller, |reply| UpdateRequest::Set { shortcut, reply })?;
+    Ok(display)
+}
+
+pub fn suspend(controller: &Controller) -> Result<(), String> {
+    request_update(controller, |reply| UpdateRequest::Suspend { reply })
+}
+
+pub fn resume(controller: &Controller) -> Result<(), String> {
+    request_update(controller, |reply| UpdateRequest::Resume { reply })
+}
+
+fn request_update(
+    controller: &Controller,
+    request: impl FnOnce(SyncSender<Result<(), String>>) -> UpdateRequest,
+) -> Result<(), String> {
     let thread_id = THREAD_ID.load(Ordering::SeqCst);
     if thread_id == 0 {
         return Err(
@@ -241,7 +307,7 @@ pub fn set(controller: &Controller, value: &str) -> Result<String, String> {
     let (reply, response) = mpsc::sync_channel(1);
     controller
         .updates
-        .send(UpdateRequest::Set { shortcut, reply })
+        .send(request(reply))
         .map_err(|_| {
             "The shortcut listener is unavailable. Restart Wavefront and try again.".to_owned()
         })?;
@@ -253,7 +319,7 @@ pub fn set(controller: &Controller, value: &str) -> Result<String, String> {
     response
         .recv_timeout(Duration::from_secs(3))
         .map_err(|_| "Timed out while updating the shortcut.".to_owned())??;
-    Ok(display)
+    Ok(())
 }
 
 pub fn stop() {

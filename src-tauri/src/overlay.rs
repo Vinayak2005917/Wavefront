@@ -18,12 +18,13 @@ struct UiState<'a> {
 
 static LAST_STATE: OnceLock<Mutex<serde_json::Value>> = OnceLock::new();
 static TRANSCRIPT_HISTORY: OnceLock<Mutex<Vec<serde_json::Value>>> = OnceLock::new();
+static HISTORY_RECORDING: OnceLock<Mutex<bool>> = OnceLock::new();
 
 fn state_store() -> &'static Mutex<serde_json::Value> {
     LAST_STATE.get_or_init(|| {
         Mutex::new(serde_json::json!({
             "state": "checking",
-            "message": "Preparing English Zipformer",
+            "message": "Preparing Nemotron 3.5 ASR",
             "detail": "Checking the local model"
         }))
     })
@@ -33,10 +34,21 @@ fn transcript_store() -> &'static Mutex<Vec<serde_json::Value>> {
     TRANSCRIPT_HISTORY.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn history_recording_store() -> &'static Mutex<bool> {
+    HISTORY_RECORDING.get_or_init(|| Mutex::new(true))
+}
+
 fn transcript_file(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
         .map(|directory| directory.join("transcriptions.json"))
+        .map_err(|error| error.to_string())
+}
+
+fn history_recording_file(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|directory| directory.join("record-history.txt"))
         .map_err(|error| error.to_string())
 }
 
@@ -50,6 +62,16 @@ fn persist_history(app: &AppHandle, history: &[serde_json::Value]) -> Result<Pat
 }
 
 pub fn load_history(app: &AppHandle) {
+    if let Ok(path) = history_recording_file(app) {
+        let enabled = fs::read_to_string(path)
+            .ok()
+            .map(|value| value.trim().parse::<bool>().unwrap_or(true))
+            .unwrap_or(true);
+        if let Ok(mut recording) = history_recording_store().lock() {
+            *recording = enabled;
+        }
+    }
+
     let Ok(path) = transcript_file(app) else {
         eprintln!("[wavefront] could not locate local transcription history file");
         return;
@@ -115,6 +137,13 @@ pub fn publish(app: &AppHandle, state: &str, message: &str, detail: &str) {
 }
 
 pub fn publish_transcript(app: &AppHandle, text: &str) {
+    let Ok(recording) = history_recording_store().lock() else {
+        eprintln!("[wavefront] could not read history recording setting");
+        return;
+    };
+    if !*recording {
+        return;
+    }
     let item = serde_json::json!({
         "text": text,
         "timestamp": std::time::SystemTime::now()
@@ -133,6 +162,7 @@ pub fn publish_transcript(app: &AppHandle, text: &str) {
             return;
         }
     };
+    drop(recording);
     match save_result {
         Ok(path) => eprintln!("[wavefront] saved transcription to {}", path.display()),
         Err(error) => eprintln!("[wavefront] could not save transcription history: {error}"),
@@ -145,31 +175,6 @@ pub fn publish_transcript(app: &AppHandle, text: &str) {
     if let Err(error) = app.emit("transcription", item) {
         eprintln!("[wavefront] could not send transcription to dashboard: {error}");
     }
-}
-
-pub fn publish_test_update(
-    app: &AppHandle,
-    session_id: u64,
-    revision: u64,
-    window_start: f32,
-    window_end: f32,
-    text: &str,
-) {
-    let _ = app.emit(
-        "transcription-test-update",
-        serde_json::json!({
-            "sessionId": session_id, "revision": revision, "windowStart": window_start,
-        "windowEnd": window_end, "text": text,
-        }),
-    );
-}
-
-pub fn publish_test_complete(app: &AppHandle, session_id: u64, started_ms: u64, text: &str) {
-    let _ = app.emit("transcription-test-complete", serde_json::json!({
-        "sessionId": session_id, "startedAt": started_ms, "finishedAt": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or_default(),
-        "finalText": text,
-    }));
 }
 
 pub fn publish_waveform(app: &AppHandle, samples: &[f32]) {
@@ -191,6 +196,43 @@ pub fn current_history() -> Vec<serde_json::Value> {
         .lock()
         .map(|items| items.clone())
         .unwrap_or_default()
+}
+
+pub fn history_recording_enabled() -> bool {
+    history_recording_store()
+        .lock()
+        .map(|recording| *recording)
+        .unwrap_or(true)
+}
+
+pub fn set_history_recording(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let mut recording = history_recording_store()
+        .lock()
+        .map_err(|error| format!("Could not update history setting: {error}"))?;
+    let path = history_recording_file(app)?;
+    fs::create_dir_all(path.parent().unwrap_or_else(|| std::path::Path::new(".")))
+        .map_err(|error| error.to_string())?;
+    let value = if enabled { "true" } else { "false" };
+    fs::write(path, value.as_bytes())
+        .map_err(|error| format!("Could not save history setting: {error}"))?;
+    *recording = enabled;
+    Ok(())
+}
+
+pub fn delete_history(app: &AppHandle) -> Result<(), String> {
+    let mut history = transcript_store()
+        .lock()
+        .map_err(|error| format!("Could not update session history: {error}"))?;
+    let previous = std::mem::take(&mut *history);
+    if let Err(error) = persist_history(app, &history) {
+        *history = previous;
+        return Err(error);
+    }
+    drop(history);
+    if let Err(error) = app.emit("transcription-history", Vec::<serde_json::Value>::new()) {
+        eprintln!("[wavefront] could not update dashboard after deleting all history: {error}");
+    }
+    Ok(())
 }
 
 pub fn delete_transcript(app: &AppHandle, timestamp: u64, text: &str) -> Result<(), String> {

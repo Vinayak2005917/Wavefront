@@ -5,12 +5,8 @@
 /src-tauri/target/
 /src-tauri/gen/schemas/
 
-# Packaged application binaries and installers
-/dist/*.exe
-/dist/*.msi
-/dist/*.msix
-/dist/*.appx
-/dist/*.zip
+# Packaged application binaries and installers (publish releases via GitHub Releases)
+/dist/
 
 # Local environment and credentials
 .env

@@ -3,6 +3,7 @@
 mod audio;
 mod dictation;
 mod hotkey;
+mod nemo;
 mod overlay;
 mod recognizer;
 mod text_injection;
@@ -29,8 +30,23 @@ fn dashboard_history() -> Vec<serde_json::Value> {
 }
 
 #[tauri::command]
+fn dashboard_history_recording() -> bool {
+    overlay::history_recording_enabled()
+}
+
+#[tauri::command]
 fn delete_transcript(timestamp: u64, text: String, app: tauri::AppHandle) -> Result<(), String> {
     overlay::delete_transcript(&app, timestamp, &text)
+}
+
+#[tauri::command]
+fn delete_history(app: tauri::AppHandle) -> Result<(), String> {
+    overlay::delete_history(&app)
+}
+
+#[tauri::command]
+fn set_history_recording(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    overlay::set_history_recording(&app, enabled)
 }
 
 #[tauri::command]
@@ -45,6 +61,21 @@ fn dashboard_hotkey(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command]
+fn suspend_dashboard_hotkey(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    hotkey::suspend(&state.hotkey)
+}
+
+#[tauri::command]
+fn resume_dashboard_hotkey(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    hotkey::resume(&state.hotkey)
+}
+
+#[tauri::command]
+fn pick_model_directory() -> Option<String> {
+    win::pick_directory("Choose a model cache folder")
+}
+
+#[tauri::command]
 fn save_recognizer_settings(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -55,7 +86,7 @@ fn save_recognizer_settings(
     state
         .commands
         .send(dictation::Command::ReloadModel)
-        .map_err(|e| format!("Could not reload the Zipformer model: {e}"))
+        .map_err(|e| format!("Could not reload the local speech model: {e}"))
 }
 
 #[tauri::command]
@@ -65,9 +96,22 @@ fn save_dashboard_hotkey(
     shortcut: String,
 ) -> Result<String, String> {
     let previous = hotkey::saved_shortcut(&app);
-    let updated = hotkey::set(&state.hotkey, &shortcut)?;
+    let updated = match hotkey::set(&state.hotkey, &shortcut) {
+        Ok(updated) => updated,
+        Err(error) => {
+            let _ = hotkey::suspend(&state.hotkey);
+            return Err(error);
+        }
+    };
     if let Err(error) = hotkey::save_shortcut(&app, &updated) {
         let _ = hotkey::set(&state.hotkey, &previous);
+        let _ = hotkey::suspend(&state.hotkey);
+        return Err(error);
+    }
+    if let Err(error) = hotkey::resume(&state.hotkey) {
+        let _ = hotkey::suspend(&state.hotkey);
+        let _ = hotkey::set(&state.hotkey, &previous);
+        let _ = hotkey::save_shortcut(&app, &previous);
         return Err(error);
     }
     Ok(updated)
@@ -78,20 +122,8 @@ fn toggle_dictation(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let target = unsafe { win::GetForegroundWindow() as isize };
     state
         .commands
-        .send(dictation::Command::Toggle {
-            target,
-            test: false,
-        })
+        .send(dictation::Command::Toggle { target })
         .map_err(|error| format!("Could not toggle dictation: {error}"))
-}
-
-#[tauri::command]
-fn start_transcription_test(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let target = unsafe { win::GetForegroundWindow() as isize };
-    state
-        .commands
-        .send(dictation::Command::StartTest { target })
-        .map_err(|error| format!("Could not start transcription test: {error}"))
 }
 
 fn main() {
@@ -104,7 +136,7 @@ fn main() {
             overlay::publish(
                 &handle,
                 "asr_checking",
-                "Preparing English Zipformer",
+                "Preparing Nemotron 3.5 ASR",
                 "Checking the local model files",
             );
             let commands = dictation::start(handle.clone());
@@ -136,13 +168,18 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             dashboard_state,
             dashboard_history,
+            dashboard_history_recording,
             delete_transcript,
+            delete_history,
+            set_history_recording,
             dashboard_recognizer_settings,
             dashboard_hotkey,
+            suspend_dashboard_hotkey,
+            resume_dashboard_hotkey,
+            pick_model_directory,
             save_recognizer_settings,
             save_dashboard_hotkey,
-            toggle_dictation,
-            start_transcription_test
+            toggle_dictation
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Wavefront");

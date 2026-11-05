@@ -6,17 +6,24 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
 use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig, OnlineStream};
 use tauri::{AppHandle, Manager};
 
-use crate::transcript::ServerEvent;
+use crate::{nemo, transcript::ServerEvent};
 
-const MODEL_DIR: &str = "sherpa-onnx-streaming-zipformer-en-2023-06-26";
-const MODEL_REPO: &str =
+const NEMOTRON_DIR: &str = "nemotron-3.5-asr-streaming-0.6b-q8_0";
+const NEMOTRON_REPO: &str = "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/ea30d66debe3740a08b573244286791d423d6b3e";
+const NEMOTRON_FILE: &str = "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf";
+const NEMOTRON_SHA256: &str = "3fc991d3badad7277c11030a7519832cddaf2057aafed6d4b25147e953a070b1";
+
+const ZIPFORMER_DIR: &str = "sherpa-onnx-streaming-zipformer-en-2023-06-26";
+const ZIPFORMER_REPO: &str =
     "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main";
-const MODEL_FILES: [&str; 4] = [
+const ZIPFORMER_FILES: [&str; 4] = [
     "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-    "decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+    // Keep the existing FP32 decoder correction in the Zipformer fallback.
+    "decoder-epoch-99-avg-1-chunk-16-left-128.onnx",
     "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
     "tokens.txt",
 ];
@@ -29,9 +36,9 @@ pub struct RecognizerSettings {
 impl RecognizerSettings {
     pub fn load(app: &AppHandle) -> Result<Self, String> {
         let app_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
-        let value = fs::read_to_string(app_dir.join("zipformer-model-directory.txt"))
+        let value = fs::read_to_string(app_dir.join("model-directory.txt"))
+            .or_else(|_| fs::read_to_string(app_dir.join("zipformer-model-directory.txt")))
             .or_else(|_| fs::read_to_string(app_dir.join("fermion-cache-dir.txt")))
-            .or_else(|_| fs::read_to_string(app_dir.join("model-directory.txt")))
             .ok()
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
@@ -46,25 +53,31 @@ impl RecognizerSettings {
         let app_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
         fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
         fs::write(
-            app_dir.join("zipformer-model-directory.txt"),
+            app_dir.join("model-directory.txt"),
             directory.to_string_lossy().as_bytes(),
         )
-        .map_err(|e| format!("Could not save model directory: {e}"))
+        .map_err(|error| format!("Could not save model directory: {error}"))
     }
 }
 
 pub fn normalize_model_directory(path: &str) -> Result<PathBuf, String> {
     let value = path.trim();
     if value.is_empty() {
-        return Err("Choose a folder for the local Zipformer model.".into());
+        return Err("Choose a folder for the local speech models.".into());
     }
     let path = PathBuf::from(value);
     fs::create_dir_all(&path).map_err(|e| format!("Could not create model folder: {e}"))?;
     Ok(path)
 }
 
+enum RecognizerBackend {
+    Nemotron(Arc<nemo::Recognizer>),
+    Zipformer(Arc<OnlineRecognizer>),
+}
+
 pub struct AsrEngine {
-    recognizer: Arc<OnlineRecognizer>,
+    backend: RecognizerBackend,
+    fallback_reason: Option<String>,
 }
 
 impl AsrEngine {
@@ -72,57 +85,149 @@ impl AsrEngine {
         overlay::publish(
             app,
             "asr_checking",
-            "Preparing English Zipformer",
-            "Checking local model files",
+            "Preparing Nemotron 3.5 ASR",
+            "Checking for the local NVIDIA CPU runtime",
         );
-        let model = ensure_model(app, &settings.model_directory)?;
-        overlay::publish(
-            app,
-            "asr_loading",
-            "Loading English Zipformer",
-            "Initializing the streaming recognizer",
-        );
-        let mut config = OnlineRecognizerConfig::default();
-        config.model_config.transducer.encoder = Some(
-            model
-                .join("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx")
-                .to_string_lossy()
-                .into_owned(),
-        );
-        config.model_config.transducer.decoder = Some(
-            model
-                .join("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx")
-                .to_string_lossy()
-                .into_owned(),
-        );
-        config.model_config.transducer.joiner = Some(
-            model
-                .join("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx")
-                .to_string_lossy()
-                .into_owned(),
-        );
-        config.model_config.tokens = Some(model.join("tokens.txt").to_string_lossy().into_owned());
-        config.model_config.provider = Some("cpu".into());
-        config.enable_endpoint = true;
-        config.decoding_method = Some("greedy_search".into());
-        let recognizer = OnlineRecognizer::create(&config)
-            .ok_or_else(|| "Could not load the English Zipformer model.".to_owned())?;
-        Ok(Self {
-            recognizer: Arc::new(recognizer),
-        })
+
+        if std::env::var("WAVEFRONT_ASR_BACKEND")
+            .is_ok_and(|value| value.trim().eq_ignore_ascii_case("zipformer"))
+        {
+            return load_zipformer(app, settings).map(|recognizer| Self {
+                backend: RecognizerBackend::Zipformer(Arc::new(recognizer)),
+                fallback_reason: Some(
+                    "Zipformer was selected with WAVEFRONT_ASR_BACKEND=zipformer.".into(),
+                ),
+            });
+        }
+
+        let nemotron = (|| {
+            let runtime = nemo::Runtime::load()?;
+            let model = ensure_nemotron_model(app, &settings.model_directory)?;
+            overlay::publish(
+                app,
+                "asr_loading",
+                "Loading Nemotron 3.5 ASR",
+                "Initializing the CPU streaming recognizer",
+            );
+            runtime.create_recognizer(&model.join(NEMOTRON_FILE))
+        })();
+
+        match nemotron {
+            Ok(recognizer) => Ok(Self {
+                backend: RecognizerBackend::Nemotron(Arc::new(recognizer)),
+                fallback_reason: None,
+            }),
+            Err(nemotron_error) => {
+                eprintln!(
+                    "[wavefront] Nemotron setup failed; loading Zipformer fallback: {nemotron_error}"
+                );
+                overlay::publish(
+                    app,
+                    "asr_loading",
+                    "Loading Zipformer fallback",
+                    &format!("Nemotron 3.5 is unavailable: {nemotron_error}"),
+                );
+                let recognizer = load_zipformer(app, settings).map_err(|zipformer_error| {
+                    format!(
+                        "Nemotron 3.5 is unavailable ({nemotron_error}); Zipformer fallback also failed ({zipformer_error})."
+                    )
+                })?;
+                Ok(Self {
+                    backend: RecognizerBackend::Zipformer(Arc::new(recognizer)),
+                    fallback_reason: Some(nemotron_error),
+                })
+            }
+        }
     }
 
-    pub fn create_stream(&self) -> AsrStream {
-        AsrStream {
-            stream: self.recognizer.create_stream(),
-            recognizer: self.recognizer.clone(),
+    pub fn ready_state(&self) -> (&'static str, String) {
+        match (&self.backend, &self.fallback_reason) {
+            (RecognizerBackend::Nemotron(_), _) => (
+                "Nemotron 3.5 ASR ready",
+                "Local streaming recognition is running on the CPU".into(),
+            ),
+            (RecognizerBackend::Zipformer(_), Some(reason)) => (
+                "Zipformer fallback ready",
+                format!("Nemotron 3.5 is unavailable: {reason}"),
+            ),
+            (RecognizerBackend::Zipformer(_), None) => (
+                "Zipformer ready",
+                "The local streaming fallback is loaded".into(),
+            ),
+        }
+    }
+
+    pub fn model_name(&self) -> &'static str {
+        match &self.backend {
+            RecognizerBackend::Nemotron(_) => "Nemotron 3.5",
+            RecognizerBackend::Zipformer(_) => "Zipformer fallback",
+        }
+    }
+
+    pub fn create_stream(&self) -> Result<AsrStream, String> {
+        let backend = match &self.backend {
+            RecognizerBackend::Nemotron(recognizer) => {
+                StreamBackend::Nemotron(recognizer.create_stream()?)
+            }
+            RecognizerBackend::Zipformer(recognizer) => StreamBackend::Zipformer {
+                stream: recognizer.create_stream(),
+                recognizer: recognizer.clone(),
+            },
+        };
+        Ok(AsrStream {
+            backend,
             events: VecDeque::new(),
             committed: Vec::new(),
             last_partial: String::new(),
             segment: 0,
+            input_sample_rate: None,
             ended: false,
-        }
+        })
     }
+}
+
+fn load_zipformer(
+    app: &AppHandle,
+    settings: &RecognizerSettings,
+) -> Result<OnlineRecognizer, String> {
+    overlay::publish(
+        app,
+        "asr_checking",
+        "Preparing Zipformer fallback",
+        "Checking local compatibility model files",
+    );
+    let model = ensure_zipformer_model(app, &settings.model_directory)?;
+    overlay::publish(
+        app,
+        "asr_loading",
+        "Loading Zipformer fallback",
+        "Initializing the compatibility streaming recognizer",
+    );
+    let mut config = OnlineRecognizerConfig::default();
+    config.model_config.transducer.encoder = Some(
+        model
+            .join("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    config.model_config.transducer.decoder = Some(
+        model
+            .join("decoder-epoch-99-avg-1-chunk-16-left-128.onnx")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    config.model_config.transducer.joiner = Some(
+        model
+            .join("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    config.model_config.tokens = Some(model.join("tokens.txt").to_string_lossy().into_owned());
+    config.model_config.provider = Some("cpu".into());
+    config.enable_endpoint = true;
+    config.decoding_method = Some("greedy_search".into());
+    OnlineRecognizer::create(&config)
+        .ok_or_else(|| "Could not load the English Zipformer compatibility model.".to_owned())
 }
 
 pub enum ClientEvent {
@@ -130,24 +235,52 @@ pub enum ClientEvent {
     Closed,
 }
 
+enum StreamBackend {
+    Nemotron(nemo::Stream),
+    Zipformer {
+        stream: OnlineStream,
+        recognizer: Arc<OnlineRecognizer>,
+    },
+}
+
 pub struct AsrStream {
-    stream: OnlineStream,
-    recognizer: Arc<OnlineRecognizer>,
+    backend: StreamBackend,
     events: VecDeque<ClientEvent>,
     committed: Vec<String>,
     last_partial: String,
     segment: u64,
+    input_sample_rate: Option<i32>,
     ended: bool,
 }
 
 impl AsrStream {
-    pub fn send_audio(&mut self, samples: &[f32]) -> Result<(), String> {
+    pub fn send_audio(&mut self, samples: &[f32], sample_rate: usize) -> Result<(), String> {
         if self.ended {
             return Err("The recognition stream has already ended.".into());
         }
-        if !samples.is_empty() {
-            self.stream.accept_waveform(16_000, samples);
-            self.decode_available();
+        if samples.is_empty() {
+            return Ok(());
+        }
+        let sample_rate = i32::try_from(sample_rate)
+            .map_err(|_| "The microphone sample rate is outside the supported range.".to_owned())?;
+        if let Some(previous_rate) = self.input_sample_rate {
+            if previous_rate != sample_rate {
+                return Err("The microphone sample rate changed during dictation.".into());
+            }
+        } else {
+            self.input_sample_rate = Some(sample_rate);
+        }
+        let nemotron_updates = match &mut self.backend {
+            StreamBackend::Nemotron(stream) => Some(stream.push(samples, sample_rate)?),
+            StreamBackend::Zipformer { stream, .. } => {
+                stream.accept_waveform(sample_rate, samples);
+                None
+            }
+        };
+        if let Some(updates) = nemotron_updates {
+            self.process_nemotron_updates(updates);
+        } else {
+            self.decode_zipformer_available();
         }
         Ok(())
     }
@@ -156,22 +289,18 @@ impl AsrStream {
         if self.ended {
             return Ok(());
         }
-        let padding = vec![0.0f32; 4_800];
-        self.stream.accept_waveform(16_000, &padding);
-        self.stream.input_finished();
-        self.decode_available();
-        let text = self
-            .recognizer
-            .get_result(&self.stream)
-            .map(|result| result.text)
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        if !text.is_empty() && text != self.last_partial {
-            self.commit(text);
-        } else if !self.last_partial.is_empty() && self.committed.last() != Some(&self.last_partial)
-        {
-            self.commit(self.last_partial.clone());
+        let nemotron_updates = match &mut self.backend {
+            StreamBackend::Nemotron(stream) => Some(stream.finish()?),
+            StreamBackend::Zipformer { .. } => None,
+        };
+        if let Some(updates) = nemotron_updates {
+            self.process_nemotron_updates(updates);
+            if !self.last_partial.is_empty() {
+                let text = std::mem::take(&mut self.last_partial);
+                self.commit(text);
+            }
+        } else {
+            self.finish_zipformer();
         }
         let full = self.committed.join(" ");
         self.events
@@ -185,28 +314,105 @@ impl AsrStream {
         self.events.pop_front().ok_or(mpsc::TryRecvError::Empty)
     }
 
-    fn decode_available(&mut self) {
-        while self.recognizer.is_ready(&self.stream) {
-            self.recognizer.decode(&self.stream);
-            let text = self
-                .recognizer
-                .get_result(&self.stream)
-                .map(|result| result.text.trim().to_owned())
-                .unwrap_or_default();
-            if !text.is_empty() && text != self.last_partial {
+    fn decode_zipformer_available(&mut self) {
+        let mut updates = Vec::new();
+        if let StreamBackend::Zipformer { stream, recognizer } = &self.backend {
+            while recognizer.is_ready(stream) {
+                recognizer.decode(stream);
+                let text = recognizer
+                    .get_result(stream)
+                    .map(|result| result.text.trim().to_owned())
+                    .unwrap_or_default();
+                let endpoint = recognizer.is_endpoint(stream);
+                updates.push((text, endpoint));
+                if endpoint {
+                    recognizer.reset(stream);
+                }
+            }
+        }
+        for (text, endpoint) in updates {
+            self.process_zipformer_text(text);
+            if endpoint {
+                self.finalize_partial();
+            }
+        }
+    }
+
+    fn finish_zipformer(&mut self) {
+        let (updates, final_text) = {
+            let mut updates = Vec::new();
+            let mut final_text = String::new();
+            if let StreamBackend::Zipformer { stream, recognizer } = &self.backend {
+                let sample_rate = self.input_sample_rate.unwrap_or(16_000);
+                let padding = vec![0.0f32; sample_rate as usize * 3 / 10];
+                stream.accept_waveform(sample_rate, &padding);
+                stream.input_finished();
+                while recognizer.is_ready(stream) {
+                    recognizer.decode(stream);
+                    let text = recognizer
+                        .get_result(stream)
+                        .map(|result| result.text.trim().to_owned())
+                        .unwrap_or_default();
+                    let endpoint = recognizer.is_endpoint(stream);
+                    updates.push((text, endpoint));
+                    if endpoint {
+                        recognizer.reset(stream);
+                    }
+                }
+                final_text = recognizer
+                    .get_result(stream)
+                    .map(|result| result.text.trim().to_owned())
+                    .unwrap_or_default();
+            }
+            (updates, final_text)
+        };
+        for (text, endpoint) in updates {
+            self.process_zipformer_text(text);
+            if endpoint {
+                self.finalize_partial();
+            }
+        }
+        if !final_text.is_empty() && final_text != self.last_partial {
+            self.commit(final_text);
+            self.last_partial.clear();
+        } else {
+            self.finalize_partial();
+        }
+    }
+
+    fn process_zipformer_text(&mut self, text: String) {
+        if !text.is_empty() && text != self.last_partial {
+            self.last_partial = text.clone();
+            self.events
+                .push_back(ClientEvent::Server(ServerEvent::Partial { text }));
+        }
+    }
+
+    fn process_nemotron_updates(&mut self, updates: Vec<nemo::ResultUpdate>) {
+        for update in updates {
+            let text = update.text.trim().to_owned();
+            if update.is_final {
+                if !text.is_empty() {
+                    self.commit(text);
+                } else {
+                    self.finalize_partial();
+                }
+                self.last_partial.clear();
+                self.segment = self.segment.wrapping_add(1);
+            } else if text != self.last_partial {
                 self.last_partial = text.clone();
                 self.events
                     .push_back(ClientEvent::Server(ServerEvent::Partial { text }));
             }
-            if self.recognizer.is_endpoint(&self.stream) {
-                if !self.last_partial.is_empty() {
-                    self.commit(self.last_partial.clone());
-                }
-                self.recognizer.reset(&self.stream);
-                self.last_partial.clear();
-                self.segment = self.segment.wrapping_add(1);
-            }
         }
+    }
+
+    fn finalize_partial(&mut self) {
+        if !self.last_partial.is_empty() {
+            let text = std::mem::take(&mut self.last_partial);
+            self.commit(text);
+        }
+        self.segment = self.segment.wrapping_add(1);
     }
 
     fn commit(&mut self, text: String) {
@@ -225,17 +431,81 @@ impl AsrStream {
 
 use crate::overlay;
 
-fn ensure_model(app: &AppHandle, base: &Path) -> Result<PathBuf, String> {
-    let model = base.join(MODEL_DIR);
-    if MODEL_FILES.iter().all(|file| model.join(file).is_file()) {
+fn ensure_nemotron_model(app: &AppHandle, base: &Path) -> Result<PathBuf, String> {
+    let directory = base.join(NEMOTRON_DIR);
+    let model_path = directory.join(NEMOTRON_FILE);
+    if model_path.is_file() && verify_nemotron_model(&model_path)? {
+        return Ok(directory);
+    }
+    if model_path.exists() {
+        fs::remove_file(&model_path)
+            .map_err(|error| format!("Could not replace the invalid Nemotron model: {error}"))?;
+    }
+
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Could not create the Nemotron model folder: {error}"))?;
+    overlay::publish(
+        app,
+        "asr_downloading",
+        "Downloading Nemotron 3.5 Q8_0",
+        "Downloading the 742 MB model from NVIDIA on Hugging Face",
+    );
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(600))
+        .build();
+    download_file(
+        app,
+        &agent,
+        &directory,
+        NEMOTRON_FILE,
+        &format!("{NEMOTRON_REPO}/{NEMOTRON_FILE}"),
+        "Downloading Nemotron 3.5 Q8_0",
+        1,
+        1,
+    )?;
+    if !verify_nemotron_model(&model_path)? {
+        let _ = fs::remove_file(&model_path);
+        return Err(
+            "The Nemotron download failed its SHA-256 check; choose Reload model to try again."
+                .into(),
+        );
+    }
+    Ok(directory)
+}
+
+fn verify_nemotron_model(path: &Path) -> Result<bool, String> {
+    let mut file = File::open(path)
+        .map_err(|error| format!("Could not read the local Nemotron model: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 1024 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not verify the Nemotron model: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    Ok(actual == NEMOTRON_SHA256)
+}
+
+fn ensure_zipformer_model(app: &AppHandle, base: &Path) -> Result<PathBuf, String> {
+    let model = base.join(ZIPFORMER_DIR);
+    if ZIPFORMER_FILES
+        .iter()
+        .all(|file| model.join(file).is_file())
+    {
         return Ok(model);
     }
 
-    fs::create_dir_all(&model).map_err(|e| format!("Could not create model folder: {e}"))?;
+    fs::create_dir_all(&model)
+        .map_err(|error| format!("Could not create model folder: {error}"))?;
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(120))
         .build();
-    let pending = MODEL_FILES
+    let pending = ZIPFORMER_FILES
         .iter()
         .filter(|file| !model.join(file).is_file())
         .count();
@@ -243,24 +513,35 @@ fn ensure_model(app: &AppHandle, base: &Path) -> Result<PathBuf, String> {
     overlay::publish(
         app,
         "asr_downloading",
-        "Downloading English Zipformer files",
-        "Starting model download",
+        "Downloading Zipformer fallback files",
+        "Starting compatibility model download",
     );
-    for file_name in MODEL_FILES {
+    for file_name in ZIPFORMER_FILES {
         if model.join(file_name).is_file() {
             continue;
         }
         current += 1;
-        download_model_file(app, &agent, &model, file_name, current, pending)?;
+        download_file(
+            app,
+            &agent,
+            &model,
+            file_name,
+            &format!("{ZIPFORMER_REPO}/{file_name}"),
+            "Downloading Zipformer fallback files",
+            current,
+            pending,
+        )?;
     }
     Ok(model)
 }
 
-fn download_model_file(
+fn download_file(
     app: &AppHandle,
     agent: &ureq::Agent,
     directory: &Path,
     file_name: &str,
+    url: &str,
+    title: &str,
     file_index: usize,
     file_count: usize,
 ) -> Result<(), String> {
@@ -269,8 +550,7 @@ fn download_model_file(
     let previous_size = fs::metadata(&partial)
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let url = format!("{MODEL_REPO}/{file_name}");
-    let mut request = agent.get(&url);
+    let mut request = agent.get(url);
     if previous_size > 0 {
         request = request.set("Range", &format!("bytes={previous_size}-"));
     }
@@ -319,12 +599,7 @@ fn download_model_file(
                     downloaded / 1_000_000,
                 ),
             };
-            overlay::publish(
-                app,
-                "asr_downloading",
-                "Downloading English Zipformer files",
-                &detail,
-            );
+            overlay::publish(app, "asr_downloading", title, &detail);
             last_publish = Instant::now();
         }
     }

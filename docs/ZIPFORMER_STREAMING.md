@@ -1,10 +1,10 @@
-# In-process English Zipformer
+# In-process English Zipformer fallback
 
-Wavefront captures microphone audio with CPAL, continuously resamples it to 16 kHz mono, and feeds it to sherpa-onnx's Rust streaming recognizer. The app does not start a local speech server, Python runtime, or WebSocket client. Inference uses the CPU provider.
+Wavefront retains the English Zipformer recognizer through sherpa-onnx as a CPU fallback. It is selected automatically if the NeMo-Speech.cpp runtime, Nemotron model download, or Nemotron initialization fails. Set `WAVEFRONT_ASR_BACKEND=zipformer` before starting Wavefront to select it for a controlled comparison. The primary model and runtime setup is documented in [Nemotron setup](NEMOTRON_STREAMING.md).
 
 ## Model setup
 
-On first launch, Wavefront downloads the four required encoder, decoder, joiner, and token files individually from the official Hugging Face model repository into the configured model folder. The dashboard reports file transfer progress; incomplete downloads can resume after a retry. The default is the app's Local AppData `models` folder. The cache folder can be changed in Settings. Existing Fermion and Phonon files are not deleted.
+When the fallback is selected, Wavefront downloads the four required encoder, decoder, joiner, and token files individually from the official Hugging Face model repository into the configured model folder. It uses the INT8 encoder and joiner with the FP32 decoder, matching Sherpa-ONNX's documented configuration. The dashboard reports file transfer progress; incomplete downloads can resume after a retry. The default is the app's Local AppData `models` folder. The cache folder can be changed in Settings. Existing Fermion and Phonon files are not deleted.
 
 First launch needs an internet connection and enough disk space for the model files. Subsequent launches use the local files. If a download is interrupted, choose **Reload model** in the dashboard to retry.
 
@@ -12,7 +12,7 @@ First launch needs an internet connection and enough disk space for the model fi
 
 The recognizer is loaded once on the dictation worker. Each dictation creates an independent online stream; incoming 20 ms PCM frames are decoded as soon as the model is ready. The latest hypothesis replaces provisional text. Zipformer endpoint detection commits speech segments; stopping flushes captured audio, adds 300 ms of tail padding, marks the stream finished, and drains remaining decoder frames.
 
-The capture callback only appends mono samples to a bounded in-memory buffer. The worker performs resampling and inference. Audio is discarded after the session. Wavefront does not log or persist recognized words except in the user's existing session history feature.
+The capture callback only appends native-rate mono samples to a bounded in-memory buffer. Sherpa-ONNX resamples them to the model rate during inference. Audio is discarded after the session. Wavefront does not log or persist recognized words except in the user's existing session history feature.
 
 ## Build and packaging
 
@@ -25,7 +25,7 @@ The `sherpa-onnx` Rust crate provides the Rust API over sherpa-onnx's native lib
 - **Microphone unavailable:** select the correct Windows default input device and check that another application is not holding it exclusively.
 - **No text appears:** check the dashboard recognizer state, speak near the microphone, and try the read-aloud test.
 
-Validate on Windows with long speech, short pauses, mid-sentence corrections, silence, rapid speech, immediate stop, target field changes, manual typing during dictation, and recognizer reload. Measure first partial latency, CPU use, memory use, and recognition quality on the target laptop. Zipformer partials and punctuation should be evaluated on real dictated text before adjusting insertion behavior.
+Validate fallback behavior with long speech, short pauses, mid-sentence corrections, silence, rapid speech, immediate stop, target field changes, manual typing during dictation, and recognizer reload. For an identical-recording comparison, see [Nemotron setup](NEMOTRON_STREAMING.md).
 
 ## Upstream references
 

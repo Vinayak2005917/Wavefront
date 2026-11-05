@@ -32,8 +32,9 @@
         "label": "dashboard",
         "title": "Wavefront",
         "url": "dashboard.html",
-        "width": 560,
+        "width": 640,
         "height": 680,
+        "maximized": true,
         "minWidth": 420,
         "minHeight": 480,
         "center": true,
@@ -54,7 +55,7 @@
     "resources": ["resources/THIRD_PARTY_NOTICES.txt"],
     "category": "Utility",
     "shortDescription": "Offline voice typing for Windows",
-    "longDescription": "Offline voice typing for Windows powered by the local English Zipformer speech model.",
+    "longDescription": "Offline voice typing for Windows powered by local Nemotron 3.5 ASR, with Zipformer fallback.",
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": {

@@ -129,6 +129,18 @@ pub struct MouseLlHookStruct {
     pub extra_info: usize,
 }
 
+#[repr(C)]
+struct BrowseInfoW {
+    owner: *mut c_void,
+    root: *mut c_void,
+    display_name: *mut u16,
+    title: *const u16,
+    flags: u32,
+    callback: Option<unsafe extern "system" fn(*mut c_void, u32, isize, isize) -> i32>,
+    parameter: isize,
+    image: i32,
+}
+
 #[derive(Clone, Copy)]
 pub struct FocusTarget {
     pub foreground: isize,
@@ -171,6 +183,49 @@ pub fn capture_focus(foreground: isize) -> Option<FocusTarget> {
         process_id,
         focused: info.hwnd_focus as isize,
     })
+}
+
+pub fn pick_directory(title: &str) -> Option<String> {
+    const BIF_RETURNONLYFSDIRS: u32 = 0x0001;
+    const BIF_EDITBOX: u32 = 0x0010;
+    const BIF_NEWDIALOGSTYLE: u32 = 0x0040;
+
+    let com_initialized = unsafe { CoInitializeEx(std::ptr::null_mut(), 0x2) } >= 0;
+    let title: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut display_name = [0u16; 260];
+    let info = BrowseInfoW {
+        owner: unsafe { GetForegroundWindow() },
+        root: std::ptr::null_mut(),
+        display_name: display_name.as_mut_ptr(),
+        title: title.as_ptr(),
+        flags: BIF_RETURNONLYFSDIRS
+            | if com_initialized {
+                BIF_EDITBOX | BIF_NEWDIALOGSTYLE
+            } else {
+                0
+            },
+        callback: None,
+        parameter: 0,
+        image: 0,
+    };
+    let item = unsafe { SHBrowseForFolderW(&info) };
+    let selected = if item.is_null() {
+        None
+    } else {
+        let mut path = [0u16; 32_768];
+        let succeeded = unsafe { SHGetPathFromIDListW(item, path.as_mut_ptr()) } != 0;
+        unsafe { CoTaskMemFree(item) };
+        if succeeded {
+            let length = path.iter().position(|unit| *unit == 0).unwrap_or(path.len());
+            Some(String::from_utf16_lossy(&path[..length]))
+        } else {
+            None
+        }
+    };
+    if com_initialized {
+        unsafe { CoUninitialize() };
+    }
+    selected
 }
 
 /// Verify both the foreground window and the exact focused control immediately before edits.
@@ -347,4 +402,17 @@ unsafe extern "system" {
     pub fn GetCurrentThreadId() -> u32;
     pub fn GetLastError() -> u32;
     pub fn GetModuleHandleW(name: *const u16) -> *mut c_void;
+}
+
+#[link(name = "shell32")]
+unsafe extern "system" {
+    fn SHBrowseForFolderW(info: *const BrowseInfoW) -> *mut c_void;
+    fn SHGetPathFromIDListW(item: *const c_void, path: *mut u16) -> i32;
+}
+
+#[link(name = "ole32")]
+unsafe extern "system" {
+    fn CoInitializeEx(reserved: *mut c_void, concurrency: u32) -> i32;
+    fn CoUninitialize();
+    fn CoTaskMemFree(memory: *mut c_void);
 }

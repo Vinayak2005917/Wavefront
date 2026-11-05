@@ -6,8 +6,7 @@ use std::time::{Duration, Instant};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, Stream};
 
-const OUTPUT_RATE: usize = 16_000;
-const FRAME_SAMPLES: usize = 320; // 20 ms at 16 kHz.
+const FRAMES_PER_SECOND: usize = 50; // 20 ms frames at the capture device's native rate.
 const WAVEFORM_POINTS: usize = 144;
 const WAVEFORM_SAMPLE_RATE: usize = 72;
 const WAVEFORM_EMIT_INTERVAL: Duration = Duration::from_millis(20);
@@ -15,7 +14,7 @@ const WAVEFORM_EMIT_INTERVAL: Duration = Duration::from_millis(20);
 pub struct AudioSession {
     capture: Option<Capture>,
     rate: usize,
-    resampler: StreamingResampler,
+    frame_samples: usize,
     frame_pending: Vec<f32>,
     frames: VecDeque<Vec<f32>>,
     waveform: VecDeque<f32>,
@@ -228,10 +227,11 @@ impl AudioSession {
     pub fn open() -> Result<Self, String> {
         let capture = Capture::open()?;
         let rate = capture.rate;
+        let frame_samples = ((rate as f64 / FRAMES_PER_SECOND as f64).round() as usize).max(1);
         Ok(Self {
             capture: Some(capture),
             rate,
-            resampler: StreamingResampler::new(rate, OUTPUT_RATE),
+            frame_samples,
             frame_pending: Vec::new(),
             frames: VecDeque::new(),
             waveform: VecDeque::with_capacity(WAVEFORM_POINTS),
@@ -264,10 +264,6 @@ impl AudioSession {
             .unwrap_or_default();
         let mut update = self.consume_samples(&tail);
         update.overrun_samples = overruns;
-        self.resampler
-            .flush()
-            .into_iter()
-            .for_each(|x| self.push_output(x));
         if !self.frame_pending.is_empty() {
             self.frames
                 .push_back(std::mem::take(&mut self.frame_pending));
@@ -278,8 +274,8 @@ impl AudioSession {
     }
     fn consume_samples(&mut self, samples: &[f32]) -> AudioUpdate {
         self.update_waveform(samples);
-        for output in self.resampler.push(samples) {
-            self.push_output(output);
+        for &sample in samples {
+            self.push_output(sample);
         }
         AudioUpdate {
             waveform: if self.last_waveform_publish.elapsed() >= WAVEFORM_EMIT_INTERVAL {
@@ -293,8 +289,12 @@ impl AudioSession {
         }
     }
     fn push_output(&mut self, sample: f32) {
-        self.frame_pending.push(sample.clamp(-1.0, 1.0));
-        if self.frame_pending.len() == FRAME_SAMPLES {
+        self.frame_pending.push(if sample.is_finite() {
+            sample.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        });
+        if self.frame_pending.len() >= self.frame_samples {
             self.frames
                 .push_back(std::mem::take(&mut self.frame_pending));
         }
@@ -322,116 +322,5 @@ impl AudioSession {
                 self.waveform_sum = 0.0;
             }
         }
-    }
-}
-
-/// Stateful linear interpolation preserves its fractional phase across CPAL capture chunks.
-/// This avoids the discontinuities caused by restarting a batch resampler for every callback.
-#[derive(Debug)]
-pub struct StreamingResampler {
-    input_rate: f64,
-    output_rate: f64,
-    source: VecDeque<f32>,
-    base: u64,
-    total: u64,
-    next_position: f64,
-}
-impl StreamingResampler {
-    pub fn new(input_rate: usize, output_rate: usize) -> Self {
-        Self {
-            input_rate: input_rate as f64,
-            output_rate: output_rate as f64,
-            source: VecDeque::new(),
-            base: 0,
-            total: 0,
-            next_position: 0.0,
-        }
-    }
-    pub fn push(&mut self, samples: &[f32]) -> Vec<f32> {
-        self.source.extend(samples.iter().map(|x| {
-            if x.is_finite() {
-                x.clamp(-1.0, 1.0)
-            } else {
-                0.0
-            }
-        }));
-        self.total += samples.len() as u64;
-        self.produce(false)
-    }
-    pub fn flush(&mut self) -> Vec<f32> {
-        self.produce(true)
-    }
-    fn produce(&mut self, flush: bool) -> Vec<f32> {
-        let mut out = Vec::new();
-        if self.input_rate <= 0.0 || self.output_rate <= 0.0 {
-            return out;
-        }
-        let last = self.total.saturating_sub(1);
-        let step = self.input_rate / self.output_rate;
-        while self.next_position <= last as f64 {
-            let i = self.next_position.floor() as u64;
-            let fraction = self.next_position - i as f64;
-            let Some(a) = self.sample(i) else { break };
-            let b = if fraction == 0.0 {
-                Some(a)
-            } else if i + 1 < self.total {
-                self.sample(i + 1)
-            } else if flush {
-                Some(a)
-            } else {
-                None
-            };
-            let Some(b) = b else {
-                break;
-            };
-            out.push((a + (b - a) * fraction as f32).clamp(-1.0, 1.0));
-            self.next_position += step;
-        }
-        let keep_from = (self.next_position.floor() as u64)
-            .saturating_sub(1)
-            .max(self.base);
-        while self.base < keep_from {
-            self.source.pop_front();
-            self.base += 1;
-        }
-        out
-    }
-    fn sample(&self, absolute: u64) -> Option<f32> {
-        self.source
-            .get(absolute.checked_sub(self.base)? as usize)
-            .copied()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::StreamingResampler;
-    #[test]
-    fn resampling_is_continuous_across_input_frames() {
-        let input: Vec<f32> = (0..8820).map(|i| ((i as f32) * 0.007).sin()).collect();
-        let mut one = StreamingResampler::new(44_100, 16_000);
-        let expected = [one.push(&input), one.flush()].concat();
-        let mut split = StreamingResampler::new(44_100, 16_000);
-        let mut actual = Vec::new();
-        for chunk in input.chunks(137) {
-            actual.extend(split.push(chunk));
-        }
-        actual.extend(split.flush());
-        assert_eq!(actual.len(), expected.len());
-        assert!(
-            actual
-                .iter()
-                .zip(expected)
-                .all(|(a, b)| (a - b).abs() < 1e-6)
-        );
-        assert!((actual.len() as i32 - 3200).abs() <= 1);
-    }
-    #[test]
-    fn resamples_mono_pcm_to_exact_rate_frame_counts() {
-        let mut r = StreamingResampler::new(48_000, 16_000);
-        let mut out = r.push(&vec![0.25; 48_000]);
-        out.extend(r.flush());
-        assert_eq!(out.len(), 16_000);
-        assert!(out.iter().all(|x| (*x - 0.25).abs() < 1e-6));
     }
 }

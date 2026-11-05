@@ -11,57 +11,70 @@
     <main class="dashboard">
       <section class="model-section" aria-labelledby="model-title">
         <div class="section-heading">
-          <div>
-            <h1 id="model-title">Local speech runtime</h1>
-          </div>
-          <span id="model-badge" class="badge">CHECKING</span>
+          <h1 id="model-title">Wavefront</h1>
+          <span id="model-detail" class="model-detail" role="status">Checking the English streaming model</span>
         </div>
-        <p id="model-detail" class="model-detail">Checking the English streaming model</p>
         <div class="progress-track" role="progressbar" aria-label="Model download progress" aria-valuemin="0" aria-valuemax="100">
           <div id="progress-fill" class="progress-fill"></div>
         </div>
         <div class="progress-labels"><span id="progress-label">Preparing model</span><span id="progress-percent">—</span></div>
-          <div id="model-actions" class="model-actions" hidden>
+        <div id="model-actions" class="model-actions" hidden>
           <p id="model-prompt">The local recognizer needs attention.</p>
           <div class="model-action-buttons"><button id="download-model" type="button">Reload model</button></div>
           <p id="model-error" class="model-error" role="alert"></p>
         </div>
       </section>
 
-      <section class="settings-section" aria-labelledby="settings-title">
-        <h2 id="settings-title">Settings</h2>
-        <div class="settings-grid">
-          <div class="setting">
-            <label for="model-directory">Zipformer model folder</label>
-            <div class="setting-row"><input id="model-directory" type="text" spellcheck="false" aria-label="Zipformer model folder" /></div>
-            <small class="setting-note">Wavefront downloads the English streaming model here on first launch. Existing Fermion cache files are left untouched.</small>
-          </div>
-          <div class="setting">
-            <label for="hotkey-shortcut">Dictation shortcut</label>
-            <div class="setting-row"><input id="hotkey-shortcut" type="text" spellcheck="false" aria-label="Dictation shortcut" placeholder="Ctrl + Q" /><button id="save-hotkey" type="button">Save</button></div>
-            <small class="setting-note">Use a modifier (Win, Ctrl, Alt, or Shift) plus one key, for example Ctrl + Shift + D.</small>
-            <p id="hotkey-status" class="setting-status" role="status"></p>
+      <section class="activity-section" aria-labelledby="activity-title">
+        <div class="activity-heading"><h2 id="activity-title" class="section-title">Daily Activity</h2><span id="activity-total">0 sessions in the past year</span></div>
+        <div class="activity-scroll">
+          <div class="calendar-layout" id="activity-calendar-description" role="img" aria-label="Daily transcription activity for the past year">
+            <div class="weekday-labels" aria-hidden="true"><span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span></div>
+            <div class="calendar-main"><div id="activity-months" class="activity-months" aria-hidden="true"></div><div id="activity-calendar" class="activity-calendar" aria-hidden="true"></div></div>
           </div>
         </div>
-        <div class="setting-row" style="margin-top:14px"><button id="save-model-settings" type="button">Save model folder and reload</button></div>
-        <p id="model-settings-status" class="setting-status" role="status"></p>
+        <div class="activity-legend" aria-hidden="true"><span>Less</span><i class="activity-day level-0"></i><i class="activity-day level-1"></i><i class="activity-day level-2"></i><i class="activity-day level-3"></i><i class="activity-day level-4"></i><span>More</span></div>
+      </section>
+
+      <section class="settings-section" aria-labelledby="settings-title">
+        <h2 id="settings-title" class="section-title">Settings</h2>
+        <div class="settings-grid">
+          <div class="setting">
+            <label for="model-directory">Model cache folder</label>
+            <div class="setting-row model-folder-row">
+              <div class="directory-input-wrap">
+                <input id="model-directory" type="text" spellcheck="false" aria-label="Model cache folder" />
+                <button id="pick-model-directory" class="folder-picker" type="button" title="Browse for a model folder" aria-label="Browse for a model folder">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5a1.5 1.5 0 0 1 1.5-1.5h4l1.7 2h6.3A1.5 1.5 0 0 1 17.5 7.5v7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.8 7h14.4"/></svg>
+                </button>
+              </div>
+            </div>
+            <p id="model-settings-status" class="setting-status" role="status"></p>
+          </div>
+          <div class="setting">
+            <label for="edit-hotkey">Dictation shortcut</label>
+            <div class="shortcut-control">
+              <button id="edit-hotkey" class="shortcut-trigger" type="button" title="Click to change the shortcut" aria-label="Current shortcut: Ctrl plus Q. Click to change it.">
+                <span id="hotkey-keycaps" class="shortcut-keycaps"><kbd class="keycap">Ctrl</kbd><span class="shortcut-plus">+</span><kbd class="keycap">Q</kbd></span>
+                <span id="hotkey-feedback" class="shortcut-feedback" aria-live="polite"></span>
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="timeline-section" aria-label="Session history">
-        <section class="test-section" aria-labelledby="test-title">
-          <div class="test-heading">
-            <div><p class="eyebrow">TRANSCRIPTION CHECK</p><h2 id="test-title">Read-aloud test</h2></div>
-            <button id="start-test" type="button">Start test</button>
-          </div>
-          <p class="test-instructions">Read this sentence aloud, then select Stop test. Wavefront will save each recognition update and the final transcript for comparison.</p>
-          <blockquote id="test-preset">Pack a small flashlight, a folded map, and a thermos of cinnamon tea before leaving the station; the trail curves past three quiet ponds, climbs a rocky ridge, and ends at a wooden lookout where the whole valley glows beneath the late-afternoon sun.</blockquote>
-          <p id="test-status" class="test-status" role="status">Ready when you are.</p>
-          <div id="test-result" class="test-result" hidden></div>
-        </section>
         <div class="timeline-heading">
-          <div><p class="eyebrow">SESSION HISTORY</p></div>
-          <span id="transcript-count" class="count">0</span>
+          <h2 class="section-title">Session History</h2>
         </div>
+        <div class="history-controls">
+          <label class="history-toggle" title="Record transcription history">
+            <input id="history-recording" type="checkbox" role="switch" aria-label="Record transcription history" checked disabled />
+            <span class="history-switch" aria-hidden="true"></span>
+          </label>
+          <button id="delete-history" class="history-delete" type="button" disabled>Delete history</button>
+        </div>
+        <p id="history-status" class="history-status" role="status" aria-live="polite"></p>
         <div id="timeline" class="timeline" aria-live="polite">
           <div id="empty-state" class="empty-state"><span class="empty-mark">—</span><p>Your session history will appear here</p><span id="shortcut-hint">Start dictating with Ctrl + Q</span></div>
         </div>

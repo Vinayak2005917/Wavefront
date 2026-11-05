@@ -16,8 +16,7 @@ use crate::{
 const WAVEFORM_POINTS: usize = 144;
 
 pub enum Command {
-    Toggle { target: isize, test: bool },
-    StartTest { target: isize },
+    Toggle { target: isize },
     ReloadModel,
     Shutdown,
 }
@@ -30,10 +29,7 @@ struct ActiveSession {
     transcript: StreamingTranscript,
     writer: TextWriter,
     _hooks: InteractionHooks,
-    test: bool,
     started: Instant,
-    started_ms: u64,
-    revision: u64,
     first_audio: bool,
     ending: bool,
     done_received: bool,
@@ -76,12 +72,10 @@ fn run(app: AppHandle, commands: Receiver<Command>) {
                     engine = load_engine(&app, &settings);
                     reload_after_session = false;
                 }
-                ready_state(&app, engine.is_some());
+                ready_state(&app, engine.as_ref());
             }
             match commands.try_recv() {
-                Ok(Command::Toggle { .. }) | Ok(Command::StartTest { .. })
-                    if active.as_ref().is_some_and(|s| !s.ending) =>
-                {
+                Ok(Command::Toggle { .. }) if active.as_ref().is_some_and(|s| !s.ending) => {
                     stop_session(&app, active.as_mut().expect("active session"));
                 }
                 Ok(Command::ReloadModel) => {
@@ -114,29 +108,16 @@ fn run(app: AppHandle, commands: Receiver<Command>) {
         }
 
         match commands.recv_timeout(Duration::from_millis(100)) {
-            Ok(Command::Toggle { target, test }) => {
+            Ok(Command::Toggle { target }) => {
                 if let Some(engine) = engine.as_ref() {
-                    active = start_session(&app, engine, target, test, next_id);
+                    active = start_session(&app, engine, target, next_id);
                     next_id = next_id.wrapping_add(1).max(1);
                 } else {
                     overlay::publish(
                         &app,
                         "asr_error",
-                        "Zipformer is not ready",
-                        "Select Reload model after checking the model folder or network connection.",
-                    );
-                }
-            }
-            Ok(Command::StartTest { target }) => {
-                if let Some(engine) = engine.as_ref() {
-                    active = start_session(&app, engine, target, true, next_id);
-                    next_id = next_id.wrapping_add(1).max(1);
-                } else {
-                    overlay::publish(
-                        &app,
-                        "asr_error",
-                        "Zipformer is not ready",
-                        "Select Reload model after checking the model folder or network connection.",
+                        "No recognizer is ready",
+                        "Select Reload model after checking the local runtime, model folder, or network connection.",
                     );
                 }
             }
@@ -161,12 +142,8 @@ fn run(app: AppHandle, commands: Receiver<Command>) {
 fn load_engine(app: &AppHandle, settings: &RecognizerSettings) -> Option<AsrEngine> {
     match AsrEngine::load(app, settings) {
         Ok(engine) => {
-            overlay::publish(
-                app,
-                "ready",
-                "English Zipformer ready",
-                "Streaming recognition runs locally on this device",
-            );
+            let (message, detail) = engine.ready_state();
+            overlay::publish(app, "ready", message, &detail);
             Some(engine)
         }
         Err(error) => {
@@ -174,7 +151,7 @@ fn load_engine(app: &AppHandle, settings: &RecognizerSettings) -> Option<AsrEngi
             overlay::publish(
                 app,
                 "asr_error",
-                "English Zipformer needs attention",
+                "Speech recognizer needs attention",
                 &error,
             );
             None
@@ -186,7 +163,6 @@ fn start_session(
     app: &AppHandle,
     engine: &AsrEngine,
     target: isize,
-    test: bool,
     id: u64,
 ) -> Option<ActiveSession> {
     let Some(focus) = win::capture_focus(target) else {
@@ -205,6 +181,13 @@ fn start_session(
             return None;
         }
     };
+    let client = match engine.create_stream() {
+        Ok(client) => client,
+        Err(error) => {
+            overlay::publish(app, "asr_error", "Could not start recognizer", &error);
+            return None;
+        }
+    };
     let audio = match AudioSession::open() {
         Ok(audio) => audio,
         Err(error) => {
@@ -218,24 +201,24 @@ fn start_session(
         app,
         "listening",
         "Listening",
-        "Streaming microphone audio to the local English Zipformer model",
+        &format!(
+            "Streaming microphone audio to the local {} model",
+            engine.model_name()
+        ),
     );
     eprintln!(
-        "[wavefront] microphone session started; input={} Hz, output=16000 Hz",
+        "[wavefront] microphone session started; mono float32 input={} Hz (passed at native rate)",
         audio.sample_rate()
     );
     Some(ActiveSession {
         id,
         focus,
         audio: Some(audio),
-        client: engine.create_stream(),
+        client,
         transcript: StreamingTranscript::default(),
         writer: TextWriter::default(),
         _hooks: hooks,
-        test,
         started: Instant::now(),
-        started_ms: now_ms(),
-        revision: 0,
         first_audio: false,
         ending: false,
         done_received: false,
@@ -251,9 +234,10 @@ fn stop_session(app: &AppHandle, session: &mut ActiveSession) {
         app,
         "finalizing",
         "Finalizing speech",
-        "Flushing the remaining audio through Zipformer",
+        "Flushing the remaining audio through the local recognizer",
     );
     if let Some(mut audio) = session.audio.take() {
+        let sample_rate = audio.sample_rate();
         let update = audio.stop();
         if let Some(samples) = update.waveform.as_deref() {
             overlay::publish_waveform(app, samples);
@@ -267,7 +251,7 @@ fn stop_session(app: &AppHandle, session: &mut ActiveSession) {
             );
         }
         for frame in update.frames {
-            if let Err(error) = session.client.send_audio(&frame) {
+            if let Err(error) = session.client.send_audio(&frame, sample_rate) {
                 overlay::publish(app, "asr_error", "Audio stream stopped", &error);
             }
         }
@@ -280,12 +264,13 @@ fn stop_session(app: &AppHandle, session: &mut ActiveSession) {
 }
 
 fn pump_session(app: &AppHandle, session: &mut ActiveSession) {
-    if !session.test && !session.insertion_paused && win::user_interaction_detected() {
+    if !session.insertion_paused && win::user_interaction_detected() {
         session.writer.pause();
         session.insertion_paused = true;
         publish_insert_error(app, InsertError::UserInteraction);
     }
     if let Some(audio) = session.audio.as_mut() {
+        let sample_rate = audio.sample_rate();
         let update = audio.poll();
         if let Some(samples) = update.waveform.as_deref() {
             overlay::publish_waveform(app, samples);
@@ -296,7 +281,7 @@ fn pump_session(app: &AppHandle, session: &mut ActiveSession) {
                 session.first_audio = true;
                 eprintln!("[wavefront] first audio frame reached recognizer");
             }
-            if let Err(error) = session.client.send_audio(&frame) {
+            if let Err(error) = session.client.send_audio(&frame, sample_rate) {
                 stop_session(app, session);
                 overlay::publish(app, "asr_error", "Audio stream stopped", &error);
                 break;
@@ -317,42 +302,21 @@ fn pump_session(app: &AppHandle, session: &mut ActiveSession) {
         match session.client.try_event() {
             Ok(ClientEvent::Server(ServerEvent::Partial { text })) => {
                 session.transcript.partial(text.clone());
-                session.revision += 1;
-                if session.test {
-                    overlay::publish_test_update(
-                        app,
-                        session.id,
-                        session.revision,
-                        0.0,
-                        session.started.elapsed().as_secs_f32(),
-                        &text,
-                    );
-                } else if !session.insertion_paused {
+                if !session.insertion_paused {
                     let result = session.writer.apply_partial(&session.focus, &text);
                     apply_insert(app, session, result);
                 }
             }
             Ok(ClientEvent::Server(ServerEvent::Final { text, segment })) => {
-                if !session.test && !session.insertion_paused {
+                if !session.insertion_paused {
                     let result = session.writer.apply_final(&session.focus, &text);
                     apply_insert(app, session, result);
-                }
-                if session.test {
-                    session.revision += 1;
-                    overlay::publish_test_update(
-                        app,
-                        session.id,
-                        session.revision,
-                        0.0,
-                        session.started.elapsed().as_secs_f32(),
-                        &text,
-                    );
                 }
                 session.transcript.finalize(text, segment);
             }
             Ok(ClientEvent::Server(ServerEvent::Done { text })) => {
                 let mismatch = session.transcript.reconcile_done(&text);
-                if mismatch && !session.test && !session.insertion_paused {
+                if mismatch && !session.insertion_paused {
                     match session.writer.apply_done(&session.focus, &text) {
                         Ok(true) => eprintln!(
                             "[wavefront] reconciled final transcript while target ownership was valid"
@@ -415,9 +379,6 @@ fn apply_insert(
 
 fn finish_record(app: &AppHandle, session: ActiveSession) {
     let text = session.transcript.assembled();
-    if session.test {
-        overlay::publish_test_complete(app, session.id, session.started_ms, &text);
-    }
     if !text.is_empty() {
         overlay::publish_transcript(app, &text);
     }
@@ -428,14 +389,10 @@ fn finish_record(app: &AppHandle, session: ActiveSession) {
     );
 }
 
-fn ready_state(app: &AppHandle, ready: bool) {
-    if ready {
-        overlay::publish(
-            app,
-            "ready",
-            "English Zipformer ready",
-            "The local streaming model is loaded",
-        );
+fn ready_state(app: &AppHandle, engine: Option<&AsrEngine>) {
+    if let Some(engine) = engine {
+        let (message, detail) = engine.ready_state();
+        overlay::publish(app, "ready", message, &detail);
         let app = app.clone();
         let _ = thread::Builder::new()
             .name("wavefront-pill-dismiss".into())
@@ -477,9 +434,3 @@ fn publish_insert_error(app: &AppHandle, error: InsertError) {
     overlay::publish(app, "focus_changed", "Text insertion paused", detail);
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
-}

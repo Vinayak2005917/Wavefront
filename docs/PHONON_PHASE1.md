@@ -1,6 +1,6 @@
 # Phase 1: Phonon-2 and Rust compatibility (historical)
 
-This records the initial in-process batch-recognition experiment. It has been superseded by the in-process English streaming Zipformer backend. See [Zipformer setup](ZIPFORMER_STREAMING.md) for the current architecture.
+This records the initial in-process batch-recognition experiment. It has been superseded by Nemotron 3.5 ASR Streaming, with Zipformer retained as fallback. See [Nemotron setup](NEMOTRON_STREAMING.md) for the current architecture.
 
 Checked on 2026-10-26. This phase validates the speech engine and records the smallest app architecture. It does not start a microphone or download model weights.
 

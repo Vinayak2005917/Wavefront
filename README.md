@@ -1,16 +1,16 @@
 # Wavefront
 
-Wavefront is a small Windows 10/11 voice typing app. It runs the English streaming Zipformer recognizer in-process through sherpa-onnx's Rust API. Wavefront inserts live recognition updates into the text control that was focused when dictation started.
+Wavefront is a small Windows 10/11 voice typing app. It uses NVIDIA Nemotron 3.5 ASR Streaming 0.6B Q8_0 through the NeMo-Speech.cpp C SDK, with the existing English Zipformer recognizer as a fallback. Wavefront inserts live recognition updates into the text control that was focused when dictation started.
 
 ## Use
 
 - Start Wavefront. Its dashboard shows model setup progress, session history and settings. Close the window to keep Wavefront running in the notification area; click the tray icon to reopen it.
 - The flyout is a compact, non-activating waveform pill.
 - Press **Ctrl + Q** (the default shortcut) to start dictation and press it again to stop. Change the shortcut and model folder in Settings.
-- Wavefront downloads the English streaming Zipformer model on first launch. Later inference runs locally from the cached model files.
+- Wavefront downloads the 742 MB Nemotron Q8_0 model on first launch and caches it locally. Inference runs on the CPU. If the NeMo-Speech.cpp CPU runtime is missing or fails to initialize, Wavefront uses the cached Zipformer fallback.
 - The tray menu can reopen the dashboard or exit Wavefront.
 
-Wavefront captures and resamples microphone audio to 16 kHz mono, then feeds it directly to the local streaming recognizer. Partial hypotheses replace only the provisional phrase; final segments are committed once. Text insertion uses native Unicode `SendInput`, verifies the original foreground window and exact focused control, and pauses after keyboard or mouse interaction. Windows may reject synthetic input into higher-integrity applications.
+Wavefront captures mono float32 microphone audio at the Windows default input device's native sample rate and sends it to the local streaming recognizer, which resamples internally. Partial hypotheses replace the provisional phrase; Nemotron commits the final transcript when dictation stops, while Zipformer can commit endpointed segments during dictation. Text insertion uses native Unicode `SendInput`, verifies the original foreground window and exact focused control, and pauses after keyboard or mouse interaction. Windows may reject synthetic input into higher-integrity applications.
 
 ## Build
 
@@ -29,7 +29,7 @@ The microphone capture uses the input device's preferred Windows audio buffer si
 
 ## Runtime setup and tests
 
-See [Zipformer setup](docs/ZIPFORMER_STREAMING.md) for model cache setup, runtime packaging notes, diagnostics and Windows validation. Model downloads and inference are managed by the Rust application.
+See [Nemotron setup and validation](docs/NEMOTRON_STREAMING.md) for the CPU SDK requirement, cache details, backend selection, and A/B comparison procedure. [Zipformer setup](docs/ZIPFORMER_STREAMING.md) documents the fallback. The Rust app manages the model download and inference.
 
 Audio is kept in memory and discarded when dictation ends. Wavefront does not save recordings or log recognized speech. Existing Fermion caches and previous model files are left untouched by this migration.
 
