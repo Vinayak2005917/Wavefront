@@ -52,10 +52,13 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["../assets/logo.ico"],
-    "resources": ["resources/THIRD_PARTY_NOTICES.txt"],
+    "resources": [
+      "resources/THIRD_PARTY_NOTICES.txt",
+      "resources/NeMoSpeech/**/*"
+    ],
     "category": "Utility",
     "shortDescription": "Offline voice typing for Windows",
-    "longDescription": "Offline voice typing for Windows powered by local Nemotron 3.5 ASR, with Zipformer fallback.",
+    "longDescription": "Offline voice typing for Windows powered by local Nemotron 3.5 ASR.",
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": {

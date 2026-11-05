@@ -4,6 +4,7 @@
 # Tauri generated build output and local CLI state
 /src-tauri/target/
 /src-tauri/gen/schemas/
+/src-tauri/resources/NeMoSpeech/
 
 # Packaged application binaries and installers (publish releases via GitHub Releases)
 /dist/
