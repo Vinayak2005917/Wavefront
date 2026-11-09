@@ -1,14 +1,9 @@
 <div align="center">
-<table>
-  <tr>
-    <td width="110" align="center" valign="middle">
-      <img src="assets\README.png" width="90">
-    </td>
-    <td valign="middle">
-      <strong style="font-size: 28px;">Wavefront</strong>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/README.png" width="90" align="middle">
+  &nbsp;&nbsp;
+  <strong>Wavefront</strong>
+</p>
 </div>
 
 Wavefront is a Windows app built with Tauri, Rust, and a plain HTML frontend. It captures microphone audio with CPAL, streams it to NVIDIA Nemotron 3.5 ASR through the NeMo-Speech.cpp CPU runtime, and inserts recognized text into the focused Windows text field.
