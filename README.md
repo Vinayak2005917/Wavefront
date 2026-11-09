@@ -1,9 +1,9 @@
 <div align="center">
-  <p align="center">
-    <img src="assets/README.png" width="100" style="vertical-align: middle;">
+  <h1>
+    <img src="assets/README.png" width="60" alt="Wavefront logo" />
     &nbsp;&nbsp;
-    <strong style="font-size: 40px; vertical-align: middle;">Wavefront</strong>
-  </p>
+    <strong>Wavefront</strong>
+  </h1>
 </div>
 
 Wavefront is a Windows app built with Tauri, Rust, and a plain HTML frontend. It captures microphone audio with CPAL, streams it to NVIDIA Nemotron 3.5 ASR through the NeMo-Speech.cpp CPU runtime, and inserts recognized text into the focused Windows text field.
@@ -12,7 +12,7 @@ Wavefront is a Windows app built with Tauri, Rust, and a plain HTML frontend. It
   <img src="demo.gif" width="500" alt="Wavefront capturing speech and inserting the transcript">
 </p>
 
-## why Privacy Matters
+## Why Privacy Matters
 
 Wavefront is designed with privacy in mind. It runs entirely on your local machine, ensuring that your voice data never leaves your device. Unlike cloud-based dictation services, Wavefront does not send your audio to external servers for processing. This means that your speech remains private and secure, giving you peace of mind while using the application.
 
